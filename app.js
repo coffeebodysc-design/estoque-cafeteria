@@ -367,31 +367,65 @@ function applyIFilter(updates) {
    PÁGINA: ESTOQUE
    ============================================= */
 function estoque() {
-  const search = state.estoqueSearch || '';
-  let list = sortItems(state.items);
-  if (search) list = list.filter(i => i.name.toLowerCase().includes(search.toLowerCase()));
+  const search    = state.estoqueSearch || '';
+  const filterCat = state.estoqueFilterCat || '';
 
-  const listHtml = list.length
-    ? list.map(item => {
-        const below = isBelow(item);
-        return `
-          <div class="estoque-item ${below ? 'estoque-below' : ''}" id="ei-${item.id}">
-            <div class="estoque-item-name">${esc(item.name)}</div>
-            <div class="estoque-item-meta">${esc(catName(item.categoryId))} · mín: ${fmtQty(item.minQty)} ${item.unit}</div>
-            <div class="estoque-controls">
-              <button class="btn-qty" onclick="changeQty('${item.id}', -1)" aria-label="Diminuir">−</button>
-              <div class="qty-field-wrap">
-                <input type="number" class="qty-field" id="qf-${item.id}"
-                  value="${fmtQty(item.currentQty)}" min="0" step="1"
-                  onchange="setQty('${item.id}', this.value)"
-                  onblur="setQty('${item.id}', this.value)">
-                <span class="qty-unit-lbl">${item.unit}</span>
-              </div>
-              <button class="btn-qty" onclick="changeQty('${item.id}', 1)" aria-label="Aumentar">＋</button>
-              <span class="save-check" id="sc-${item.id}">✓</span>
-            </div>
-          </div>`;
-      }).join('')
+  let list = [...state.items].sort((a, b) => a.name.localeCompare(b.name, 'pt-BR'));
+  if (search)    list = list.filter(i => i.name.toLowerCase().includes(search.toLowerCase()));
+  if (filterCat) list = list.filter(i => i.categoryId === filterCat);
+
+  // Agrupar por categoria
+  const groups = [];
+  const seen   = new Set();
+
+  // Categorias com itens
+  state.categories.forEach(cat => {
+    const itens = list.filter(i => i.categoryId === cat.id);
+    if (itens.length === 0) return;
+    groups.push({ cat, itens });
+    seen.add(cat.id);
+  });
+
+  // Itens sem categoria
+  const semCat = list.filter(i => !i.categoryId || !state.categories.find(c => c.id === i.categoryId));
+  if (semCat.length) groups.push({ cat: { id: '', name: 'Sem categoria' }, itens: semCat });
+
+  const renderItem = item => {
+    const below = isBelow(item);
+    return `
+      <div class="estoque-item ${below ? 'estoque-below' : ''}" id="ei-${item.id}">
+        <div class="estoque-item-name">${esc(item.name)}</div>
+        <div class="estoque-item-meta">mín: ${fmtQty(item.minQty)} ${item.unit}${below ? ' · <span style="color:var(--danger);font-weight:700">abaixo do mínimo</span>' : ''}</div>
+        <div class="estoque-controls">
+          <button class="btn-qty" onclick="changeQty('${item.id}', -1)" aria-label="Diminuir">−</button>
+          <div class="qty-field-wrap">
+            <input type="number" class="qty-field" id="qf-${item.id}"
+              value="${fmtQty(item.currentQty)}" min="0" step="1"
+              onchange="setQty('${item.id}', this.value)"
+              onblur="setQty('${item.id}', this.value)">
+            <span class="qty-unit-lbl">${item.unit}</span>
+          </div>
+          <button class="btn-qty" onclick="changeQty('${item.id}', 1)" aria-label="Aumentar">＋</button>
+          <span class="save-check" id="sc-${item.id}">✓</span>
+        </div>
+      </div>`;
+  };
+
+  const catOpts = state.categories
+    .map(c => `<option value="${c.id}" ${filterCat === c.id ? 'selected' : ''}>${esc(c.name)}</option>`)
+    .join('');
+
+  const listHtml = groups.length
+    ? groups.map(({ cat, itens }) => `
+        <div class="estoque-group">
+          <div class="estoque-group-header">
+            <span class="estoque-group-name">${esc(cat.name)}</span>
+            <span class="estoque-group-count">${itens.length} ${itens.length === 1 ? 'item' : 'itens'}</span>
+          </div>
+          <div class="estoque-group-items">
+            ${itens.map(renderItem).join('')}
+          </div>
+        </div>`).join('')
     : `<div class="empty-state">
         <span class="empty-icon">✏️</span>
         <p>${state.items.length === 0 ? 'Nenhum insumo cadastrado.' : 'Nenhum item encontrado.'}</p>
@@ -400,15 +434,21 @@ function estoque() {
   return `
     <div class="search-bar">
       <input type="search" class="search-input" placeholder="Buscar item..."
-        value="${esc(search)}" oninput="filterEstoque(this.value)">
+        value="${esc(search)}" oninput="filterEstoque('search', this.value)">
     </div>
+    ${state.categories.length > 0 ? `
+      <select class="select-filter" onchange="filterEstoque('cat', this.value)">
+        <option value="">Todas as categorias</option>
+        ${catOpts}
+      </select>` : ''}
     <div class="estoque-tip">Toque no número para editar · Use − e ＋ para ajustes rápidos</div>
     <div class="estoque-list">${listHtml}</div>
   `;
 }
 
-function filterEstoque(val) {
-  state.estoqueSearch = val;
+function filterEstoque(field, val) {
+  if (field === 'search') state.estoqueSearch    = val;
+  if (field === 'cat')    state.estoqueFilterCat = val;
   document.getElementById('page-content').innerHTML = estoque();
 }
 
