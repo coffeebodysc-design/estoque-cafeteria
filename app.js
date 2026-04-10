@@ -390,10 +390,15 @@ function produtos() {
         const below = isBelow(item);
         return `
           <div class="estoque-item ${below ? 'estoque-below' : ''}" id="ei-${item.id}">
-            <div class="estoque-item-name">${esc(item.name)}</div>
-            <div class="estoque-item-meta">
-              ${below ? '<span class="text-danger" style="font-weight:700">⚠️ Produzir · </span>' : ''}
-              mín: ${fmtQty(item.minQty)} ${item.unit}
+            <div class="estoque-item-header">
+              <div>
+                <div class="estoque-item-name">${esc(item.name)}</div>
+                <div class="estoque-item-meta">
+                  ${below ? '<span class="text-danger" style="font-weight:700">⚠️ Produzir · </span>' : ''}
+                  mín: ${fmtQty(item.minQty)} ${item.unit}
+                </div>
+              </div>
+              <button class="btn-edit-item" onclick="openItemForm('${item.id}')" title="Editar">✏️</button>
             </div>
             <div class="estoque-controls">
               <button class="btn-qty" onclick="changeQty('${item.id}', -1)" title="Vendeu 1">−</button>
@@ -450,10 +455,15 @@ function insumos() {
         const below = isBelow(item);
         return `
           <div class="estoque-item ${below ? 'estoque-below' : ''}" id="ei-${item.id}">
-            <div class="estoque-item-name">${esc(item.name)}</div>
-            <div class="estoque-item-meta">
-              mín: ${fmtQty(item.minQty)} ${item.unit}
-              ${below ? ' · <span class="text-danger" style="font-weight:700">comprar</span>' : ''}
+            <div class="estoque-item-header">
+              <div>
+                <div class="estoque-item-name">${esc(item.name)}</div>
+                <div class="estoque-item-meta">
+                  mín: ${fmtQty(item.minQty)} ${item.unit}
+                  ${below ? ' · <span class="text-danger" style="font-weight:700">comprar</span>' : ''}
+                </div>
+              </div>
+              <button class="btn-edit-item" onclick="openItemForm('${item.id}')" title="Editar">✏️</button>
             </div>
             <div class="estoque-controls">
               <button class="btn-qty" onclick="changeQty('${item.id}', -1)" aria-label="Diminuir">−</button>
