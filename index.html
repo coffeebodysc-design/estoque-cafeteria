@@ -7,11 +7,10 @@
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <title>Estoque Cafeteria</title>
-  <link rel="stylesheet" href="css/style.css">
+  <link rel="stylesheet" href="style.css">
 </head>
 <body>
 
-  <!-- LOADER (exibido enquanto conecta ao Firebase) -->
   <div id="loader">
     <div class="loader-logo">☕</div>
     <div class="loader-spinner"></div>
@@ -19,8 +18,6 @@
   </div>
 
   <div id="app" class="hidden">
-
-    <!-- HEADER -->
     <header id="app-header">
       <div class="header-side"></div>
       <h1 id="page-title">Estoque</h1>
@@ -28,11 +25,7 @@
         <span id="sync-dot" title="Conectado"></span>
       </div>
     </header>
-
-    <!-- MAIN CONTENT -->
     <main id="page-content"></main>
-
-    <!-- BOTTOM NAV -->
     <nav id="bottom-nav">
       <button class="nav-item" data-page="dashboard">
         <span class="nav-icon">&#9783;</span>
@@ -55,10 +48,8 @@
         <span class="nav-label">Categorias</span>
       </button>
     </nav>
+  </div>
 
-  </div><!-- /#app -->
-
-  <!-- MODAL OVERLAY -->
   <div id="modal-overlay" class="hidden" onclick="handleOverlayClick(event)">
     <div id="modal-sheet">
       <div class="modal-handle"></div>
@@ -70,17 +61,11 @@
     </div>
   </div>
 
-  <!-- TOAST -->
   <div id="toast" class="hidden" role="alert" aria-live="polite"></div>
 
-  <!-- FIREBASE SDKs -->
   <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
-
-  <!-- Configuração do Firebase (editar com seus dados) -->
-  <script src="js/firebase-config.js"></script>
-
-  <!-- App -->
-  <script src="js/app.js"></script>
+  <script src="firebase-config.js"></script>
+  <script src="app.js"></script>
 </body>
 </html>
