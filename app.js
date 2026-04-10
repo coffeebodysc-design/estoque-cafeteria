@@ -5,10 +5,6 @@
    ============================================= */
 const UNITS = ['un', 'kg', 'g', 'L', 'ml', 'cx', 'pct', 'dz'];
 
-const DEFAULT_CATEGORIES = [
-  'Freezer', 'Geladeira', 'Armário', 'Produção', 'Limpeza', 'Embalagens'
-];
-
 /* =============================================
    FIRESTORE
    ============================================= */
@@ -18,88 +14,78 @@ let db;
    ESTADO
    ============================================= */
 let state = {
-  page:        'dashboard',
-  categories:  [],
-  items:       [],
-  estoqueSearch: '',
-  initialized: false,
+  page:           'dashboard',
+  categories:     [],
+  items:          [],
+  insumosTab:     'cafeteria',
+  insumosSearch:  '',
+  produtosSearch: '',
+  initialized:    false,
 };
 
-let _catsReady  = false;
-let _itemsReady = false;
-
-// Filtros da página Insumos (apenas sessão)
-let iFilters = { search: '', status: '', type: '', catId: '' };
-let listaTab = 'comprar';
-
-// Timers de debounce por item (atualização de estoque)
+let listaTab = 'produzir';
 const qtyTimers = {};
+let _catsReady = false, _itemsReady = false;
 
 /* =============================================
    FIREBASE INIT
    ============================================= */
 function initFirebase() {
-  // Verifica se a config foi preenchida
   if (!FIREBASE_CONFIG || FIREBASE_CONFIG.apiKey.startsWith('COLE_AQUI')) {
-    showLoaderError(
-      'Configure o Firebase primeiro!',
-      'Abra o arquivo <strong>js/firebase-config.js</strong> e preencha com os dados do seu projeto Firebase.'
-    );
+    showLoaderError('Configure o Firebase primeiro!',
+      'Abra <strong>firebase-config.js</strong> e preencha com os dados do seu projeto.');
     return;
   }
-
   try {
     firebase.initializeApp(FIREBASE_CONFIG);
     db = firebase.firestore();
     setupListeners();
   } catch (e) {
-    console.error('Firebase init error:', e);
-    showLoaderError('Erro ao conectar', 'Verifique a configuração do Firebase e tente recarregar.');
+    console.error(e);
+    showLoaderError('Erro ao conectar', 'Verifique a configuração do Firebase.');
   }
 }
 
 function setupListeners() {
-  db.collection('categories').orderBy('name').onSnapshot(
-    snap => {
-      state.categories = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-      _catsReady = true;
-      checkDataReady();
-      if (state.initialized) safeRefresh();
-    },
-    err => {
-      console.error('Firestore categories error:', err);
-      showLoaderError('Erro de permissão', 'Verifique as <strong>Regras do Firestore</strong> no Firebase Console e libere leitura/escrita.');
-    }
-  );
+  db.collection('categories').orderBy('name').onSnapshot(snap => {
+    state.categories = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    _catsReady = true;
+    checkDataReady();
+    if (state.initialized) safeRefresh();
+  }, err => {
+    console.error(err);
+    showLoaderError('Erro de permissão',
+      'Verifique as <strong>Regras do Firestore</strong> no Firebase Console.');
+  });
 
-  db.collection('items').orderBy('name').onSnapshot(
-    snap => {
-      state.items = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-      _itemsReady = true;
-      checkDataReady();
-      if (state.initialized) safeRefresh();
-    },
-    err => {
-      console.error('Firestore items error:', err);
-      showToast('Erro ao carregar itens', 'error');
-    }
-  );
+  db.collection('items').orderBy('name').onSnapshot(snap => {
+    state.items = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    _itemsReady = true;
+    checkDataReady();
+    if (state.initialized) safeRefresh();
+  }, err => {
+    console.error(err);
+    showToast('Erro ao carregar itens', 'error');
+  });
 }
 
 function checkDataReady() {
-  if (_catsReady && _itemsReady && !state.initialized) {
-    state.initialized = true;
-    showLoader(false);
-    setupNav();
-    if (state.categories.length === 0) {
-      seedData();
-    } else {
-      navigateTo('dashboard');
-    }
+  if (!_catsReady || !_itemsReady || state.initialized) return;
+  state.initialized = true;
+  showLoader(false);
+  setupNav();
+
+  // Detecta schema antigo (sem campo 'section') ou banco vazio → reseed
+  const hasOldSchema = state.items.length > 0 && !state.items.some(i => i.section);
+  const isEmpty = state.items.length === 0 && state.categories.length === 0;
+
+  if (hasOldSchema || isEmpty) {
+    clearAndSeed();
+  } else {
+    navigateTo('dashboard');
   }
 }
 
-// Atualiza a página sem interferir em campos ativos (digitação)
 function safeRefresh() {
   const focused = document.activeElement;
   const content = document.getElementById('page-content');
@@ -108,44 +94,141 @@ function safeRefresh() {
 }
 
 /* =============================================
-   SEED DE DADOS INICIAIS
+   MIGRAÇÃO / SEED
    ============================================= */
-async function seedData() {
+async function clearAndSeed() {
+  showLoader(true);
+  document.querySelector('.loader-text').textContent = 'Carregando dados...';
+
   try {
-    const batch = db.batch();
-    const now = new Date().toISOString();
-
-    const catRefs = DEFAULT_CATEGORIES.map(name => {
-      const ref = db.collection('categories').doc();
-      batch.set(ref, { name, createdAt: now });
-      return ref;
-    });
-
-    const [freezer, geladeira, armario, producao, , embalagens] = catRefs;
-
-    const sampleItems = [
-      { name: 'Leite integral',   categoryId: geladeira.id,   unit: 'L',  currentQty: 6,   minQty: 15,  type: 'comprar',  observation: '' },
-      { name: 'Manteiga',          categoryId: geladeira.id,   unit: 'kg', currentQty: 0.5, minQty: 1,   type: 'comprar',  observation: '' },
-      { name: 'Pão de queijo',     categoryId: freezer.id,     unit: 'un', currentQty: 40,  minQty: 80,  type: 'produzir', observation: 'Fazer toda manhã' },
-      { name: 'Cookie chocolate',  categoryId: producao.id,    unit: 'un', currentQty: 10,  minQty: 30,  type: 'produzir', observation: '' },
-      { name: 'Café em grão',      categoryId: armario.id,     unit: 'kg', currentQty: 2,   minQty: 3,   type: 'comprar',  observation: 'Grão especial' },
-      { name: 'Açúcar refinado',   categoryId: armario.id,     unit: 'kg', currentQty: 5,   minQty: 5,   type: 'comprar',  observation: '' },
-      { name: 'Copos 200ml',       categoryId: embalagens.id,  unit: 'un', currentQty: 200, minQty: 100, type: 'comprar',  observation: '' },
-      { name: 'Sachê de açúcar',   categoryId: embalagens.id,  unit: 'cx', currentQty: 3,   minQty: 5,   type: 'comprar',  observation: '' },
-    ];
-
-    sampleItems.forEach(item => {
-      const ref = db.collection('items').doc();
-      batch.set(ref, { ...item, createdAt: now });
-    });
-
-    await batch.commit();
-    navigateTo('dashboard');
+    if (state.items.length > 0 || state.categories.length > 0) {
+      const delBatch = db.batch();
+      state.items.forEach(i => delBatch.delete(db.collection('items').doc(i.id)));
+      state.categories.forEach(c => delBatch.delete(db.collection('categories').doc(c.id)));
+      await delBatch.commit();
+    }
+    await seedData();
   } catch (e) {
-    console.error('Seed error:', e);
-    showToast('Erro ao criar dados iniciais', 'error');
+    console.error('Clear/seed error:', e);
+    showLoader(false);
     navigateTo('dashboard');
   }
+}
+
+async function seedData() {
+  const now = new Date().toISOString();
+
+  // Categorias
+  const catVitRef  = db.collection('categories').doc();
+  const catCafeRef = db.collection('categories').doc();
+  const catProdRef = db.collection('categories').doc();
+
+  const batch1 = db.batch();
+  batch1.set(catVitRef,  { name: 'Vitrine',       createdAt: now });
+  batch1.set(catCafeRef, { name: 'Cafeteria',      createdAt: now });
+  batch1.set(catProdRef, { name: 'Produção Pati',  createdAt: now });
+
+  // ── Produtos ──────────────────────────────
+  [
+    { name: 'Banana Bread',        unit: 'un', minQty: 8  },
+    { name: 'Bolo Cenoura',        unit: 'un', minQty: 10 },
+    { name: 'Bolo Milho',          unit: 'un', minQty: 10 },
+    { name: 'Brownie',             unit: 'un', minQty: 5  },
+    { name: 'Caramelo Salgado',    unit: 'g',  minQty: 0  },
+    { name: 'Calda de Goiabada',   unit: 'g',  minQty: 0  },
+    { name: 'Cookie Red Velvet',   unit: 'un', minQty: 5  },
+    { name: 'Cookie Tradicional',  unit: 'un', minQty: 10 },
+    { name: 'Focaccia',            unit: 'un', minQty: 3  },
+    { name: 'Fudge',               unit: 'un', minQty: 5  },
+    { name: 'Muffin de Mirtilo',   unit: 'un', minQty: 6  },
+    { name: 'Pão de Queijo',       unit: 'un', minQty: 15 },
+    { name: 'Torta Banoffee',      unit: 'un', minQty: 0  },
+    { name: 'Torta de Limão',      unit: 'un', minQty: 0  },
+  ].forEach(p => {
+    const ref = db.collection('items').doc();
+    batch1.set(ref, { ...p, section: 'produto', categoryId: catVitRef.id, currentQty: 0, observation: '', createdAt: now });
+  });
+
+  // ── Insumos Cafeteria ─────────────────────
+  [
+    { name: 'Abacate',           unit: 'un', minQty: 5   },
+    { name: 'Água com Gás',      unit: 'un', minQty: 10  },
+    { name: 'Água sem Gás',      unit: 'un', minQty: 10  },
+    { name: 'Chocolate Sicao',   unit: 'kg', minQty: 2   },
+    { name: 'Coca-cola Normal',  unit: 'un', minQty: 6   },
+    { name: 'Coca-cola Zero',    unit: 'un', minQty: 10  },
+    { name: 'Creme de Leite',    unit: 'un', minQty: 3   },
+    { name: 'Doce de Leite',     unit: 'un', minQty: 2   },
+    { name: 'Filtro 102',        unit: 'un', minQty: 3   },
+    { name: 'Filtro N4',         unit: 'un', minQty: 2   },
+    { name: 'Filtro V60',        unit: 'un', minQty: 2   },
+    { name: 'Geleia de Frutas',  unit: 'un', minQty: 1   },
+    { name: 'Leite Integral',    unit: 'L',  minQty: 6   },
+    { name: 'Leite Sem Lactose', unit: 'L',  minQty: 3   },
+    { name: 'Leite Vegetal',     unit: 'L',  minQty: 5   },
+    { name: 'Limão',             unit: 'un', minQty: 3   },
+    { name: 'Manteiga',          unit: 'un', minQty: 3   },
+    { name: 'Ovo',               unit: 'un', minQty: 60  },
+    { name: 'Pão Ciabatta',      unit: 'un', minQty: 50  },
+    { name: 'Pão de Sanduíche',  unit: 'un', minQty: 2   },
+    { name: 'Polvilho Azedo',    unit: 'kg', minQty: 2   },
+    { name: 'Polvilho Doce',     unit: 'kg', minQty: 2   },
+    { name: 'Presunto',          unit: 'g',  minQty: 100 },
+    { name: 'Queijo Fatiado',    unit: 'g',  minQty: 500 },
+    { name: 'Queijo Minas',      unit: 'g',  minQty: 200 },
+    { name: 'Xarope Avelã',      unit: 'un', minQty: 1   },
+    { name: 'Xarope Baunilha',   unit: 'un', minQty: 1   },
+  ].forEach(i => {
+    const ref = db.collection('items').doc();
+    batch1.set(ref, { ...i, section: 'insumo_cafeteria', categoryId: catCafeRef.id, currentQty: 0, observation: '', createdAt: now });
+  });
+
+  await batch1.commit();
+
+  // ── Insumos Produção Pati (batch separado) ─
+  const batch2 = db.batch();
+  [
+    { name: 'Açúcar',                    unit: 'kg', minQty: 0 },
+    { name: 'Açúcar Demerara',           unit: 'kg', minQty: 0 },
+    { name: 'Açúcar Mascavo',            unit: 'kg', minQty: 0 },
+    { name: 'Amido de Milho',            unit: 'kg', minQty: 0 },
+    { name: 'Azeite de Oliva',           unit: 'L',  minQty: 0 },
+    { name: 'Banana Banoffee',           unit: 'un', minQty: 0 },
+    { name: 'Banana Grande',             unit: 'un', minQty: 0 },
+    { name: 'Bicarbonato de Sódio',      unit: 'g',  minQty: 0 },
+    { name: 'Biscoito Isabela 400g',     unit: 'un', minQty: 0 },
+    { name: 'Cacau em Pó',               unit: 'kg', minQty: 0 },
+    { name: 'Canela em Pó',              unit: 'g',  minQty: 0 },
+    { name: 'Cenoura',                   unit: 'kg', minQty: 0 },
+    { name: 'Chocolate Branco',          unit: 'kg', minQty: 0 },
+    { name: 'Cranberry',                 unit: 'g',  minQty: 0 },
+    { name: 'Essência de Baunilha',      unit: 'ml', minQty: 0 },
+    { name: 'Farinha 00',                unit: 'kg', minQty: 0 },
+    { name: 'Farinha de Arroz',          unit: 'kg', minQty: 0 },
+    { name: 'Farinha de Trigo',          unit: 'kg', minQty: 0 },
+    { name: 'Farinha de Trigo Integral', unit: 'kg', minQty: 0 },
+    { name: 'Fermento Químico em Pó',    unit: 'g',  minQty: 0 },
+    { name: 'Forma Brownie 135ml',       unit: 'un', minQty: 0 },
+    { name: 'Forma Focaccia 500ml',      unit: 'un', minQty: 0 },
+    { name: 'Fubá',                      unit: 'kg', minQty: 0 },
+    { name: 'Goiabada',                  unit: 'kg', minQty: 0 },
+    { name: 'Gotas de Chocolate',        unit: 'kg', minQty: 0 },
+    { name: 'Leite Condensado',          unit: 'un', minQty: 0 },
+    { name: 'Limão (Produção)',          unit: 'un', minQty: 0 },
+    { name: 'Limão Siciliano',           unit: 'un', minQty: 0 },
+    { name: 'Milho',                     unit: 'un', minQty: 0 },
+    { name: 'Mirtilo',                   unit: 'g',  minQty: 0 },
+    { name: 'Nata',                      unit: 'kg', minQty: 0 },
+    { name: 'Óleo',                      unit: 'L',  minQty: 0 },
+    { name: 'Tomate Cereja',             unit: 'g',  minQty: 0 },
+  ].forEach(i => {
+    const ref = db.collection('items').doc();
+    batch2.set(ref, { ...i, section: 'insumo_producao', categoryId: catProdRef.id, currentQty: 0, observation: '', createdAt: now });
+  });
+
+  await batch2.commit();
+  showLoader(false);
+  navigateTo('dashboard');
 }
 
 /* =============================================
@@ -159,22 +242,18 @@ function setupNav() {
 
 function navigateTo(page) {
   state.page = page;
-
   const titles = {
     dashboard:  'Estoque Cafeteria',
+    produtos:   'Produtos',
     insumos:    'Insumos',
-    estoque:    'Atualizar Estoque',
     listas:     'Listas',
     categorias: 'Categorias',
   };
-
   document.getElementById('page-title').textContent = titles[page] || page;
-
   document.querySelectorAll('.nav-item').forEach(b =>
     b.classList.toggle('active', b.dataset.page === page)
   );
-
-  const renders = { dashboard, insumos, estoque, listas, categorias };
+  const renders = { dashboard, produtos, insumos, listas, categorias };
   const el = document.getElementById('page-content');
   el.innerHTML = (renders[page] || (() => ''))();
   el.scrollTop = 0;
@@ -185,23 +264,29 @@ function navigateTo(page) {
    ============================================= */
 function catName(id) {
   const c = state.categories.find(c => c.id === id);
-  return c ? c.name : 'Sem categoria';
+  return c ? c.name : '';
 }
 
 function isBelow(item) {
-  return parseFloat(item.currentQty) < parseFloat(item.minQty);
+  return parseFloat(item.minQty) > 0 &&
+         parseFloat(item.currentQty) < parseFloat(item.minQty);
 }
 
 function fmtQty(qty) {
   const n = parseFloat(qty);
+  if (isNaN(n)) return '0';
   return Number.isInteger(n) ? String(n) : n.toFixed(1).replace(/\.0$/, '');
 }
 
-function belowItems(type) {
-  return state.items.filter(i => isBelow(i) && (!type || i.type === type));
+function itemsBySection(section) {
+  return state.items.filter(i => i.section === section);
 }
 
-function sortItems(arr) {
+function belowBySection(...sections) {
+  return state.items.filter(i => sections.includes(i.section) && isBelow(i));
+}
+
+function sortWithBelowFirst(arr) {
   return [...arr].sort((a, b) => {
     if (isBelow(a) && !isBelow(b)) return -1;
     if (!isBelow(a) && isBelow(b)) return 1;
@@ -213,70 +298,75 @@ function sortItems(arr) {
    PÁGINA: DASHBOARD
    ============================================= */
 function dashboard() {
-  const total    = state.items.length;
-  const abaixo   = belowItems().length;
-  const comprar  = belowItems('comprar').length;
-  const produzir = belowItems('produzir').length;
+  const prodAbaixo    = belowBySection('produto');
+  const comprarAbaixo = belowBySection('insumo_cafeteria', 'insumo_producao');
+  const totalProd     = itemsBySection('produto').length;
+  const totalInsumos  = itemsBySection('insumo_cafeteria').length + itemsBySection('insumo_producao').length;
 
   const hoje = new Date().toLocaleDateString('pt-BR', {
     weekday: 'long', day: 'numeric', month: 'long'
   });
 
-  const alertas = belowItems();
+  // Alertas combinados
+  const alertas = [...prodAbaixo, ...comprarAbaixo];
   const alertasHtml = alertas.length
     ? `<div class="section">
         <p class="section-title">⚠️ Atenção necessária</p>
         <div class="alert-list">
-          ${alertas.map(item => `
-            <div class="alert-item" onclick="openInsumoForm('${item.id}')">
-              <div class="alert-item-info">
-                <span class="alert-item-name">${esc(item.name)}</span>
-                <span class="alert-item-cat">${esc(catName(item.categoryId))}</span>
-              </div>
-              <div class="alert-item-qty">
-                <span class="qty-badge-danger">${fmtQty(item.currentQty)} ${item.unit}</span>
-                <span class="qty-min-sm">mín: ${fmtQty(item.minQty)}</span>
-              </div>
-            </div>`).join('')}
+          ${alertas.map(item => {
+            const page = item.section === 'produto' ? 'produtos' : 'insumos';
+            const icon = item.section === 'produto' ? '🛍️' : item.section === 'insumo_cafeteria' ? '☕' : '👩‍🍳';
+            return `
+              <div class="alert-item" onclick="navigateTo('${page}')">
+                <div class="alert-item-info">
+                  <span class="alert-item-name">${esc(item.name)}</span>
+                  <span class="alert-item-cat">${icon} ${item.section === 'produto' ? 'Produto' : item.section === 'insumo_cafeteria' ? 'Cafeteria' : 'Produção Pati'}</span>
+                </div>
+                <div class="alert-item-qty">
+                  <span class="qty-badge-danger">${fmtQty(item.currentQty)} ${item.unit}</span>
+                  <span class="qty-min-sm">mín: ${fmtQty(item.minQty)}</span>
+                </div>
+              </div>`;
+          }).join('')}
         </div>
        </div>`
     : `<div class="empty-state success">
         <span class="empty-icon">✅</span>
-        <p>Tudo certo! Todos os itens estão dentro do estoque mínimo.</p>
+        <p>Tudo certo! Estoque dentro do mínimo.</p>
        </div>`;
 
   return `
     <div class="date-header">${hoje}</div>
 
     <div class="stats-grid">
+      <div class="stat-card" onclick="navigateTo('produtos')">
+        <div class="stat-icon">🛍️</div>
+        <div class="stat-value">${totalProd}</div>
+        <div class="stat-label">Produtos</div>
+      </div>
+      <div class="stat-card ${prodAbaixo.length > 0 ? 'stat-danger' : ''}" onclick="navigateTo('listas')">
+        <div class="stat-icon">${prodAbaixo.length > 0 ? '⚠️' : '✅'}</div>
+        <div class="stat-value">${prodAbaixo.length}</div>
+        <div class="stat-label">Produzir</div>
+      </div>
       <div class="stat-card" onclick="navigateTo('insumos')">
         <div class="stat-icon">📦</div>
-        <div class="stat-value">${total}</div>
-        <div class="stat-label">Total de insumos</div>
+        <div class="stat-value">${totalInsumos}</div>
+        <div class="stat-label">Insumos</div>
       </div>
-      <div class="stat-card ${abaixo > 0 ? 'stat-danger' : ''}" onclick="navigateTo('listas')">
-        <div class="stat-icon">${abaixo > 0 ? '⚠️' : '✅'}</div>
-        <div class="stat-value">${abaixo}</div>
-        <div class="stat-label">Abaixo do mínimo</div>
-      </div>
-      <div class="stat-card" onclick="navigateTo('listas')">
-        <div class="stat-icon">🛒</div>
-        <div class="stat-value">${comprar}</div>
-        <div class="stat-label">Para comprar</div>
-      </div>
-      <div class="stat-card" onclick="navigateTo('listas')">
-        <div class="stat-icon">👨‍🍳</div>
-        <div class="stat-value">${produzir}</div>
-        <div class="stat-label">Para produzir</div>
+      <div class="stat-card ${comprarAbaixo.length > 0 ? 'stat-danger' : ''}" onclick="navigateTo('listas')">
+        <div class="stat-icon">${comprarAbaixo.length > 0 ? '🛒' : '✅'}</div>
+        <div class="stat-value">${comprarAbaixo.length}</div>
+        <div class="stat-label">Comprar</div>
       </div>
     </div>
 
     <div class="quick-actions">
-      <button class="btn-action-primary" onclick="openInsumoForm()">
-        <span>＋</span> Cadastrar insumo
+      <button class="btn-action-primary" onclick="navigateTo('produtos')">
+        <span>🛍️</span> Atualizar produtos
       </button>
-      <button class="btn-action-secondary" onclick="navigateTo('estoque')">
-        <span>✏️</span> Atualizar estoque
+      <button class="btn-action-secondary" onclick="navigateTo('insumos')">
+        <span>📦</span> Atualizar insumos
       </button>
       <button class="btn-action-secondary" onclick="navigateTo('listas')">
         <span>📋</span> Ver listas de compra / produção
@@ -288,175 +378,149 @@ function dashboard() {
 }
 
 /* =============================================
-   PÁGINA: INSUMOS
+   PÁGINA: PRODUTOS
    ============================================= */
-function insumos() {
-  const { search, status, type, catId } = iFilters;
-
-  let list = sortItems(state.items);
-  if (search)  list = list.filter(i => i.name.toLowerCase().includes(search.toLowerCase()));
-  if (status === 'below') list = list.filter(isBelow);
-  if (status === 'ok')    list = list.filter(i => !isBelow(i));
-  if (type)    list = list.filter(i => i.type === type);
-  if (catId)   list = list.filter(i => i.categoryId === catId);
-
-  const catOpts = state.categories
-    .map(c => `<option value="${c.id}" ${catId === c.id ? 'selected' : ''}>${esc(c.name)}</option>`)
-    .join('');
+function produtos() {
+  const search = state.produtosSearch || '';
+  let list = sortWithBelowFirst(itemsBySection('produto'));
+  if (search) list = list.filter(i => i.name.toLowerCase().includes(search.toLowerCase()));
 
   const listHtml = list.length
     ? list.map(item => {
         const below = isBelow(item);
         return `
-          <div class="insumo-card ${below ? 'below-min' : ''}" onclick="openInsumoForm('${item.id}')">
-            <div class="insumo-main">
-              <div class="insumo-info">
-                <span class="insumo-name">${esc(item.name)}</span>
-                <span class="insumo-meta">${esc(catName(item.categoryId))} · ${item.type === 'comprar' ? '🛒 Comprar' : '👨‍🍳 Produzir'}</span>
-              </div>
-              <div class="insumo-qty-col">
-                <span class="qty-atual ${below ? 'text-danger' : 'text-success'}">${fmtQty(item.currentQty)} ${item.unit}</span>
-                <span class="qty-min-lbl">mín: ${fmtQty(item.minQty)}</span>
-              </div>
+          <div class="estoque-item ${below ? 'estoque-below' : ''}" id="ei-${item.id}">
+            <div class="estoque-item-name">${esc(item.name)}</div>
+            <div class="estoque-item-meta">
+              ${below ? '<span class="text-danger" style="font-weight:700">⚠️ Produzir · </span>' : ''}
+              mín: ${fmtQty(item.minQty)} ${item.unit}
             </div>
-            ${item.observation ? `<div class="insumo-obs">${esc(item.observation)}</div>` : ''}
-            ${below ? '<span class="badge-below">Abaixo do mínimo</span>' : ''}
+            <div class="estoque-controls">
+              <button class="btn-qty" onclick="changeQty('${item.id}', -1)" title="Vendeu 1">−</button>
+              <div class="qty-field-wrap">
+                <input type="number" class="qty-field" id="qf-${item.id}"
+                  value="${fmtQty(item.currentQty)}" min="0" step="1"
+                  onchange="setQty('${item.id}', this.value)"
+                  onblur="setQty('${item.id}', this.value)">
+                <span class="qty-unit-lbl">${item.unit}</span>
+              </div>
+              <button class="btn-qty" onclick="changeQty('${item.id}', 1)" title="Produziu 1">＋</button>
+              <span class="save-check" id="sc-${item.id}">✓</span>
+            </div>
+          </div>`;
+      }).join('')
+    : `<div class="empty-state">
+        <span class="empty-icon">🛍️</span>
+        <p>Nenhum produto encontrado.</p>
+       </div>`;
+
+  return `
+    <div class="search-bar">
+      <input type="search" class="search-input" placeholder="Buscar produto..."
+        value="${esc(search)}" oninput="filterProdutos(this.value)">
+    </div>
+    <div class="estoque-tip">− Vendeu · ＋ Produziu · Toque no número para editar</div>
+    <div class="estoque-list">${listHtml}</div>
+    <button class="fab" onclick="openItemForm(null,'produto')" title="Novo produto">＋</button>
+  `;
+}
+
+function filterProdutos(val) {
+  state.produtosSearch = val;
+  document.getElementById('page-content').innerHTML = produtos();
+}
+
+/* =============================================
+   PÁGINA: INSUMOS
+   ============================================= */
+function insumos() {
+  const search  = state.insumosSearch || '';
+  const section = state.insumosTab === 'cafeteria' ? 'insumo_cafeteria' : 'insumo_producao';
+
+  let list = sortWithBelowFirst(itemsBySection(section));
+  if (search) list = list.filter(i => i.name.toLowerCase().includes(search.toLowerCase()));
+
+  const belowCafe  = belowBySection('insumo_cafeteria').length;
+  const belowProd  = belowBySection('insumo_producao').length;
+  const totalCafe  = itemsBySection('insumo_cafeteria').length;
+  const totalProdS = itemsBySection('insumo_producao').length;
+
+  const listHtml = list.length
+    ? list.map(item => {
+        const below = isBelow(item);
+        return `
+          <div class="estoque-item ${below ? 'estoque-below' : ''}" id="ei-${item.id}">
+            <div class="estoque-item-name">${esc(item.name)}</div>
+            <div class="estoque-item-meta">
+              mín: ${fmtQty(item.minQty)} ${item.unit}
+              ${below ? ' · <span class="text-danger" style="font-weight:700">comprar</span>' : ''}
+            </div>
+            <div class="estoque-controls">
+              <button class="btn-qty" onclick="changeQty('${item.id}', -1)" aria-label="Diminuir">−</button>
+              <div class="qty-field-wrap">
+                <input type="number" class="qty-field" id="qf-${item.id}"
+                  value="${fmtQty(item.currentQty)}" min="0" step="1"
+                  onchange="setQty('${item.id}', this.value)"
+                  onblur="setQty('${item.id}', this.value)">
+                <span class="qty-unit-lbl">${item.unit}</span>
+              </div>
+              <button class="btn-qty" onclick="changeQty('${item.id}', 1)" aria-label="Aumentar">＋</button>
+              <span class="save-check" id="sc-${item.id}">✓</span>
+            </div>
           </div>`;
       }).join('')
     : `<div class="empty-state">
         <span class="empty-icon">📦</span>
-        <p>${state.items.length === 0 ? 'Nenhum insumo cadastrado ainda.' : 'Nenhum item encontrado.'}</p>
-        ${state.items.length === 0 ? '<button class="btn-primary" onclick="openInsumoForm()">Cadastrar primeiro insumo</button>' : ''}
+        <p>Nenhum insumo encontrado.</p>
        </div>`;
 
+  const badgeCafe = belowCafe > 0
+    ? `<span class="tab-badge">${belowCafe}</span>`
+    : `<span class="tab-badge">${totalCafe}</span>`;
+  const badgeProd = belowProd > 0
+    ? `<span class="tab-badge">${belowProd}</span>`
+    : `<span class="tab-badge">${totalProdS}</span>`;
+
   return `
+    <div class="tabs">
+      <button class="tab ${state.insumosTab === 'cafeteria' ? 'tab-active' : ''}"
+        onclick="setInsumosTab('cafeteria')">
+        ☕ Cafeteria ${badgeCafe}
+      </button>
+      <button class="tab ${state.insumosTab === 'producao' ? 'tab-active' : ''}"
+        onclick="setInsumosTab('producao')">
+        👩‍🍳 Produção ${badgeProd}
+      </button>
+    </div>
     <div class="search-bar">
       <input type="search" class="search-input" placeholder="Buscar insumo..."
-        value="${esc(search)}" oninput="applyIFilter({search:this.value})">
+        value="${esc(search)}" oninput="filterInsumos(this.value)">
     </div>
-
-    <div class="filter-row">
-      <button class="chip ${!status && !type ? 'chip-active' : ''}"
-        onclick="applyIFilter({status:'',type:''})">Todos (${state.items.length})</button>
-      <button class="chip ${status === 'below' ? 'chip-active chip-danger' : ''}"
-        onclick="applyIFilter({status:'${status === 'below' ? '' : 'below'}'})">⚠️ Baixo (${belowItems().length})</button>
-      <button class="chip ${type === 'comprar' ? 'chip-active' : ''}"
-        onclick="applyIFilter({type:'${type === 'comprar' ? '' : 'comprar'}'})">🛒 Comprar</button>
-      <button class="chip ${type === 'produzir' ? 'chip-active' : ''}"
-        onclick="applyIFilter({type:'${type === 'produzir' ? '' : 'produzir'}'})">👨‍🍳 Produzir</button>
-    </div>
-
-    ${state.categories.length > 0 ? `
-      <select class="select-filter" onchange="applyIFilter({catId:this.value})">
-        <option value="">Todas as categorias</option>
-        ${catOpts}
-      </select>` : ''}
-
-    <div class="insumos-list">${listHtml}</div>
-
-    <button class="fab" onclick="openInsumoForm()" title="Novo insumo">＋</button>
+    <div class="estoque-tip">Toque no número para editar · Use − e ＋ para ajustes rápidos</div>
+    <div class="estoque-list">${listHtml}</div>
+    <button class="fab" onclick="openItemForm(null,'${section}')" title="Novo insumo">＋</button>
   `;
 }
 
-function applyIFilter(updates) {
-  Object.assign(iFilters, updates);
+function setInsumosTab(tab) {
+  state.insumosTab    = tab;
+  state.insumosSearch = '';
+  document.getElementById('page-content').innerHTML = insumos();
+}
+
+function filterInsumos(val) {
+  state.insumosSearch = val;
   document.getElementById('page-content').innerHTML = insumos();
 }
 
 /* =============================================
-   PÁGINA: ESTOQUE
+   ESTOQUE: CONTROLES COMUNS (Produtos + Insumos)
    ============================================= */
-function estoque() {
-  const search    = state.estoqueSearch || '';
-  const filterCat = state.estoqueFilterCat || '';
-
-  let list = [...state.items].sort((a, b) => a.name.localeCompare(b.name, 'pt-BR'));
-  if (search)    list = list.filter(i => i.name.toLowerCase().includes(search.toLowerCase()));
-  if (filterCat) list = list.filter(i => i.categoryId === filterCat);
-
-  // Agrupar por categoria
-  const groups = [];
-  const seen   = new Set();
-
-  // Categorias com itens
-  state.categories.forEach(cat => {
-    const itens = list.filter(i => i.categoryId === cat.id);
-    if (itens.length === 0) return;
-    groups.push({ cat, itens });
-    seen.add(cat.id);
-  });
-
-  // Itens sem categoria
-  const semCat = list.filter(i => !i.categoryId || !state.categories.find(c => c.id === i.categoryId));
-  if (semCat.length) groups.push({ cat: { id: '', name: 'Sem categoria' }, itens: semCat });
-
-  const renderItem = item => {
-    const below = isBelow(item);
-    return `
-      <div class="estoque-item ${below ? 'estoque-below' : ''}" id="ei-${item.id}">
-        <div class="estoque-item-name">${esc(item.name)}</div>
-        <div class="estoque-item-meta">mín: ${fmtQty(item.minQty)} ${item.unit}${below ? ' · <span style="color:var(--danger);font-weight:700">abaixo do mínimo</span>' : ''}</div>
-        <div class="estoque-controls">
-          <button class="btn-qty" onclick="changeQty('${item.id}', -1)" aria-label="Diminuir">−</button>
-          <div class="qty-field-wrap">
-            <input type="number" class="qty-field" id="qf-${item.id}"
-              value="${fmtQty(item.currentQty)}" min="0" step="1"
-              onchange="setQty('${item.id}', this.value)"
-              onblur="setQty('${item.id}', this.value)">
-            <span class="qty-unit-lbl">${item.unit}</span>
-          </div>
-          <button class="btn-qty" onclick="changeQty('${item.id}', 1)" aria-label="Aumentar">＋</button>
-          <span class="save-check" id="sc-${item.id}">✓</span>
-        </div>
-      </div>`;
-  };
-
-  const catOpts = state.categories
-    .map(c => `<option value="${c.id}" ${filterCat === c.id ? 'selected' : ''}>${esc(c.name)}</option>`)
-    .join('');
-
-  const listHtml = groups.length
-    ? groups.map(({ cat, itens }) => `
-        <div class="estoque-group">
-          <div class="estoque-group-header">
-            <span class="estoque-group-name">${esc(cat.name)}</span>
-            <span class="estoque-group-count">${itens.length} ${itens.length === 1 ? 'item' : 'itens'}</span>
-          </div>
-          <div class="estoque-group-items">
-            ${itens.map(renderItem).join('')}
-          </div>
-        </div>`).join('')
-    : `<div class="empty-state">
-        <span class="empty-icon">✏️</span>
-        <p>${state.items.length === 0 ? 'Nenhum insumo cadastrado.' : 'Nenhum item encontrado.'}</p>
-       </div>`;
-
-  return `
-    <div class="search-bar">
-      <input type="search" class="search-input" placeholder="Buscar item..."
-        value="${esc(search)}" oninput="filterEstoque('search', this.value)">
-    </div>
-    ${state.categories.length > 0 ? `
-      <select class="select-filter" onchange="filterEstoque('cat', this.value)">
-        <option value="">Todas as categorias</option>
-        ${catOpts}
-      </select>` : ''}
-    <div class="estoque-tip">Toque no número para editar · Use − e ＋ para ajustes rápidos</div>
-    <div class="estoque-list">${listHtml}</div>
-  `;
-}
-
-function filterEstoque(field, val) {
-  if (field === 'search') state.estoqueSearch    = val;
-  if (field === 'cat')    state.estoqueFilterCat = val;
-  document.getElementById('page-content').innerHTML = estoque();
-}
-
 function changeQty(id, delta) {
   const item = state.items.find(i => i.id === id);
   if (!item) return;
   item.currentQty = Math.max(0, Math.round((parseFloat(item.currentQty) + delta) * 10) / 10);
-  _refreshEstoqueItem(item);
+  _refreshQtyItem(item);
   scheduleQtySave(id, item.currentQty);
 }
 
@@ -466,12 +530,11 @@ function setQty(id, val) {
   const n = parseFloat(val);
   if (isNaN(n) || n < 0) return;
   item.currentQty = Math.round(n * 10) / 10;
-  _refreshEstoqueItem(item);
+  _refreshQtyItem(item);
   scheduleQtySave(id, item.currentQty);
 }
 
-// Atualiza o DOM localmente sem esperar o Firestore (otimista)
-function _refreshEstoqueItem(item) {
+function _refreshQtyItem(item) {
   const row = document.getElementById(`ei-${item.id}`);
   if (row) row.classList.toggle('estoque-below', isBelow(item));
   const inp = document.getElementById(`qf-${item.id}`);
@@ -484,7 +547,6 @@ function _refreshEstoqueItem(item) {
   }
 }
 
-// Debounce da escrita no Firestore (evita writes por tecla)
 function scheduleQtySave(id, qty) {
   clearTimeout(qtyTimers[id]);
   qtyTimers[id] = setTimeout(async () => {
@@ -502,43 +564,50 @@ function scheduleQtySave(id, qty) {
    PÁGINA: LISTAS
    ============================================= */
 function listas() {
-  const comprar  = belowItems('comprar');
-  const produzir = belowItems('produzir');
-  const current  = listaTab === 'comprar' ? comprar : produzir;
-  const vazio    = listaTab === 'comprar' ? 'comprar' : 'produzir';
+  const produzir     = belowBySection('produto');
+  const comprarCafe  = belowBySection('insumo_cafeteria');
+  const comprarProd  = belowBySection('insumo_producao');
+  const comprar      = [...comprarCafe, ...comprarProd];
+  const current      = listaTab === 'produzir' ? produzir : comprar;
 
-  const listHtml = current.length
-    ? current.map(item => `
-        <div class="lista-item">
-          <div class="lista-item-info">
-            <span class="lista-item-name">${esc(item.name)}</span>
-            <span class="lista-item-cat">${esc(catName(item.categoryId))}</span>
-          </div>
-          <div class="lista-item-qty">
-            <span class="liq-atual">Atual: ${fmtQty(item.currentQty)} ${item.unit}</span>
-            <span class="liq-min">Mín: ${fmtQty(item.minQty)} ${item.unit}</span>
-          </div>
-        </div>`).join('')
+  const renderLista = items => items.length
+    ? items.map(item => {
+        const icon = item.section === 'produto' ? '🛍️' :
+                     item.section === 'insumo_cafeteria' ? '☕' : '👩‍🍳';
+        const label = item.section === 'insumo_cafeteria' ? 'Cafeteria' :
+                      item.section === 'insumo_producao'  ? 'Produção'  : 'Produto';
+        return `
+          <div class="lista-item">
+            <div class="lista-item-info">
+              <span class="lista-item-name">${esc(item.name)}</span>
+              <span class="lista-item-cat">${icon} ${label}</span>
+            </div>
+            <div class="lista-item-qty">
+              <span class="liq-atual">Atual: ${fmtQty(item.currentQty)} ${item.unit}</span>
+              <span class="liq-min">Mín: ${fmtQty(item.minQty)} ${item.unit}</span>
+            </div>
+          </div>`;
+      }).join('')
     : `<div class="empty-state success">
         <span class="empty-icon">✅</span>
-        <p>Nenhum item para ${vazio} no momento!</p>
+        <p>${listaTab === 'produzir' ? 'Nenhum produto abaixo do mínimo!' : 'Nada para comprar!'}</p>
        </div>`;
 
-  const hasAny = comprar.length > 0 || produzir.length > 0;
+  const hasAny = produzir.length > 0 || comprar.length > 0;
 
   return `
     <div class="tabs">
+      <button class="tab ${listaTab === 'produzir' ? 'tab-active' : ''}"
+        onclick="setListaTab('produzir')">
+        👩‍🍳 Produzir <span class="tab-badge">${produzir.length}</span>
+      </button>
       <button class="tab ${listaTab === 'comprar' ? 'tab-active' : ''}"
         onclick="setListaTab('comprar')">
         🛒 Comprar <span class="tab-badge">${comprar.length}</span>
       </button>
-      <button class="tab ${listaTab === 'produzir' ? 'tab-active' : ''}"
-        onclick="setListaTab('produzir')">
-        👨‍🍳 Produzir <span class="tab-badge">${produzir.length}</span>
-      </button>
     </div>
 
-    <div class="lista-content">${listHtml}</div>
+    <div class="lista-content">${renderLista(current)}</div>
 
     ${hasAny ? `
       <div class="lista-actions">
@@ -558,51 +627,48 @@ function setListaTab(tab) {
 }
 
 function gerarTexto() {
-  const comprar  = belowItems('comprar');
-  const produzir = belowItems('produzir');
-  const data     = new Date().toLocaleDateString('pt-BR');
+  const produzir    = belowBySection('produto');
+  const comprarCafe = belowBySection('insumo_cafeteria');
+  const comprarProd = belowBySection('insumo_producao');
+  const data        = new Date().toLocaleDateString('pt-BR');
+
   let msg = `*Estoque Cafeteria*\n_${data}_\n`;
 
-  if (comprar.length) {
-    msg += `\n*Itens para comprar:*\n`;
-    comprar.forEach(i => msg += `- ${i.name}: atual ${fmtQty(i.currentQty)} ${i.unit} | mínimo ${fmtQty(i.minQty)} ${i.unit}\n`);
-  }
   if (produzir.length) {
-    msg += `\n*Itens para produzir:*\n`;
-    produzir.forEach(i => msg += `- ${i.name}: atual ${fmtQty(i.currentQty)} ${i.unit} | mínimo ${fmtQty(i.minQty)} ${i.unit}\n`);
+    msg += `\n*Produzir:*\n`;
+    produzir.forEach(i => msg += `- ${i.name}: atual ${fmtQty(i.currentQty)} ${i.unit} | mín ${fmtQty(i.minQty)} ${i.unit}\n`);
   }
-  if (!comprar.length && !produzir.length) {
-    msg += `\n_Estoque OK! Todos os itens dentro do mínimo. ✅_`;
+  if (comprarCafe.length) {
+    msg += `\n*Comprar (Cafeteria):*\n`;
+    comprarCafe.forEach(i => msg += `- ${i.name}: atual ${fmtQty(i.currentQty)} ${i.unit} | mín ${fmtQty(i.minQty)} ${i.unit}\n`);
+  }
+  if (comprarProd.length) {
+    msg += `\n*Comprar (Produção Pati):*\n`;
+    comprarProd.forEach(i => msg += `- ${i.name}: atual ${fmtQty(i.currentQty)} ${i.unit} | mín ${fmtQty(i.minQty)} ${i.unit}\n`);
+  }
+  if (!produzir.length && !comprarCafe.length && !comprarProd.length) {
+    msg += `\n_Tudo OK! Estoque dentro do mínimo. ✅_`;
   }
   return msg;
 }
 
 function sendWhatsApp() {
-  const text = gerarTexto();
-  window.open(`https://wa.me/?text=${encodeURIComponent(text)}`, '_blank');
+  window.open(`https://wa.me/?text=${encodeURIComponent(gerarTexto())}`, '_blank');
 }
 
 function copyLista() {
   const text = gerarTexto().replace(/\*/g, '').replace(/_/g, '');
   const doFallback = () => {
     const ta = document.createElement('textarea');
-    ta.value = text;
-    ta.style.position = 'fixed';
-    ta.style.opacity = '0';
-    document.body.appendChild(ta);
-    ta.focus(); ta.select();
+    ta.value = text; ta.style.position = 'fixed'; ta.style.opacity = '0';
+    document.body.appendChild(ta); ta.focus(); ta.select();
     document.execCommand('copy');
     document.body.removeChild(ta);
     showToast('Texto copiado!', 'success');
   };
   if (navigator.clipboard) {
-    navigator.clipboard.writeText(text).then(
-      () => showToast('Texto copiado!', 'success'),
-      doFallback
-    );
-  } else {
-    doFallback();
-  }
+    navigator.clipboard.writeText(text).then(() => showToast('Texto copiado!', 'success'), doFallback);
+  } else doFallback();
 }
 
 /* =============================================
@@ -616,18 +682,15 @@ function categorias() {
           <div class="cat-card">
             <div class="cat-info">
               <span class="cat-name">${esc(cat.name)}</span>
-              <span class="cat-count">${count} ${count === 1 ? 'insumo' : 'insumos'}</span>
+              <span class="cat-count">${count} ${count === 1 ? 'item' : 'itens'}</span>
             </div>
             <div class="cat-actions">
-              <button class="btn-icon-sm" onclick="openCatForm('${cat.id}')" title="Editar">✏️</button>
-              <button class="btn-icon-sm" onclick="confirmDelCat('${cat.id}')" title="Excluir">🗑️</button>
+              <button class="btn-icon-sm" onclick="openCatForm('${cat.id}')">✏️</button>
+              <button class="btn-icon-sm" onclick="confirmDelCat('${cat.id}')">🗑️</button>
             </div>
           </div>`;
       }).join('')
-    : `<div class="empty-state">
-        <span class="empty-icon">🏷️</span>
-        <p>Nenhuma categoria cadastrada.</p>
-       </div>`;
+    : `<div class="empty-state"><span class="empty-icon">🏷️</span><p>Nenhuma categoria.</p></div>`;
 
   return `
     <div class="page-top-action">
@@ -638,29 +701,41 @@ function categorias() {
 }
 
 /* =============================================
-   FORM: INSUMO (add/edit)
+   FORM: ITEM (add/edit) — Produto ou Insumo
    ============================================= */
-function openInsumoForm(id) {
-  const item = id ? state.items.find(i => i.id === id) : null;
-  const title = item ? 'Editar Insumo' : 'Novo Insumo';
+function openItemForm(id, defaultSection) {
+  const item    = id ? state.items.find(i => i.id === id) : null;
+  const section = item ? item.section : (defaultSection || 'insumo_cafeteria');
+  const title   = item ? 'Editar Item' : 'Novo Item';
 
   const catOpts = state.categories
     .map(c => `<option value="${c.id}" ${item && item.categoryId === c.id ? 'selected' : ''}>${esc(c.name)}</option>`)
     .join('');
 
   const unitOpts = UNITS
-    .map(u => `<option value="${u}" ${item && item.unit === u ? 'selected' : ''}>${u}</option>`)
+    .map(u => `<option value="${u}" ${(item ? item.unit : (section === 'produto' ? 'un' : 'kg')) === u ? 'selected' : ''}>${u}</option>`)
     .join('');
 
-  const isComprar  = !item || item.type === 'comprar';
-  const isProduzir = item && item.type === 'produzir';
+  const sectionOpts = [
+    { v: 'produto',           l: '🛍️ Produto (vitrine)' },
+    { v: 'insumo_cafeteria',  l: '☕ Insumo Cafeteria'  },
+    { v: 'insumo_producao',   l: '👩‍🍳 Insumo Produção Pati' },
+  ].map(o => `<option value="${o.v}" ${section === o.v ? 'selected' : ''}>${o.l}</option>`).join('');
 
   const html = `
-    <form id="form-insumo" onsubmit="saveInsumo(event,'${id || ''}')">
+    <form id="form-item" onsubmit="saveItem(event,'${id || ''}')">
+
       <div class="form-group">
         <label class="form-label">Nome *</label>
-        <input type="text" name="name" class="form-input" required
-          placeholder="Ex: Leite integral" value="${item ? esc(item.name) : ''}" autocomplete="off">
+        <input type="text" name="name" class="form-input" required autocomplete="off"
+          placeholder="Ex: Brownie" value="${item ? esc(item.name) : ''}">
+      </div>
+
+      <div class="form-group">
+        <label class="form-label">Tipo *</label>
+        <select name="section" class="form-input form-select" required>
+          ${sectionOpts}
+        </select>
       </div>
 
       <div class="form-row">
@@ -683,74 +758,48 @@ function openInsumoForm(id) {
         <div class="form-group">
           <label class="form-label">Qtd. atual *</label>
           <input type="number" name="currentQty" class="form-input" required
-            min="0" step="0.1" placeholder="0"
-            value="${item ? item.currentQty : ''}">
+            min="0" step="0.1" placeholder="0" value="${item ? item.currentQty : '0'}">
         </div>
         <div class="form-group">
-          <label class="form-label">Qtd. mínima *</label>
-          <input type="number" name="minQty" class="form-input" required
-            min="0" step="0.1" placeholder="0"
-            value="${item ? item.minQty : ''}">
-        </div>
-      </div>
-
-      <div class="form-group">
-        <label class="form-label">Tipo *</label>
-        <div class="radio-group">
-          <label class="radio-opt ${isComprar ? 'sel' : ''}">
-            <input type="radio" name="type" value="comprar" ${isComprar ? 'checked' : ''}>
-            🛒 Comprar
-          </label>
-          <label class="radio-opt ${isProduzir ? 'sel' : ''}">
-            <input type="radio" name="type" value="produzir" ${isProduzir ? 'checked' : ''}>
-            👨‍🍳 Produzir
-          </label>
+          <label class="form-label">Qtd. mínima</label>
+          <input type="number" name="minQty" class="form-input"
+            min="0" step="0.1" placeholder="0" value="${item ? item.minQty : '0'}">
         </div>
       </div>
 
       <div class="form-group">
         <label class="form-label">Observação</label>
         <textarea name="observation" class="form-input form-textarea"
-          placeholder="Opcional...">${item ? esc(item.observation) : ''}</textarea>
+          placeholder="Opcional...">${item ? esc(item.observation || '') : ''}</textarea>
       </div>
 
       <div class="form-actions">
-        ${id ? `<button type="button" class="btn-danger-ghost" onclick="confirmDelInsumo('${id}')">Excluir</button>` : ''}
+        ${id ? `<button type="button" class="btn-danger-ghost" onclick="confirmDelItem('${id}')">Excluir</button>` : ''}
         <div class="spacer"></div>
         <button type="button" class="btn-secondary" onclick="closeModal()">Cancelar</button>
-        <button type="submit" class="btn-primary" id="btn-save-insumo">Salvar</button>
+        <button type="submit" class="btn-primary" id="btn-save-item">Salvar</button>
       </div>
     </form>`;
 
   openModal(title, html);
-
-  setTimeout(() => {
-    document.querySelectorAll('#form-insumo .radio-opt input').forEach(inp => {
-      inp.addEventListener('change', () => {
-        document.querySelectorAll('#form-insumo .radio-opt').forEach(lb =>
-          lb.classList.toggle('sel', lb.querySelector('input').checked)
-        );
-      });
-    });
-  }, 50);
 }
 
-async function saveInsumo(e, id) {
+async function saveItem(e, id) {
   e.preventDefault();
   const f = e.target;
   const name = f.name.value.trim();
-  if (!name) { showToast('Informe o nome do insumo', 'error'); return; }
+  if (!name) { showToast('Informe o nome', 'error'); return; }
 
-  const saveBtn = document.getElementById('btn-save-insumo');
+  const saveBtn = document.getElementById('btn-save-item');
   if (saveBtn) { saveBtn.disabled = true; saveBtn.textContent = 'Salvando...'; }
 
   const data = {
     name,
+    section:     f.section.value,
     categoryId:  f.categoryId.value,
     unit:        f.unit.value,
     currentQty:  Math.max(0, parseFloat(f.currentQty.value) || 0),
     minQty:      Math.max(0, parseFloat(f.minQty.value) || 0),
-    type:        f.type.value,
     observation: f.observation.value.trim(),
   };
 
@@ -761,32 +810,32 @@ async function saveInsumo(e, id) {
       await db.collection('items').add({ ...data, createdAt: new Date().toISOString() });
     }
     closeModal();
-    showToast(id ? 'Insumo atualizado!' : 'Insumo cadastrado!', 'success');
+    showToast(id ? 'Atualizado!' : 'Cadastrado!', 'success');
   } catch (err) {
     console.error(err);
-    showToast('Erro ao salvar. Tente novamente.', 'error');
+    showToast('Erro ao salvar', 'error');
     if (saveBtn) { saveBtn.disabled = false; saveBtn.textContent = 'Salvar'; }
   }
 }
 
-function confirmDelInsumo(id) {
+function confirmDelItem(id) {
   const item = state.items.find(i => i.id === id);
   if (!item) return;
-  openModal('Excluir Insumo', `
+  openModal('Excluir Item', `
     <p class="confirm-msg">Excluir <strong>${esc(item.name)}</strong>?</p>
     <p class="text-muted" style="font-size:13px;margin-bottom:16px">Esta ação não pode ser desfeita.</p>
     <div class="form-actions">
-      <button class="btn-secondary" onclick="openInsumoForm('${id}')">Voltar</button>
+      <button class="btn-secondary" onclick="openItemForm('${id}')">Voltar</button>
       <div class="spacer"></div>
-      <button class="btn-danger" onclick="deleteInsumo('${id}')">Excluir</button>
+      <button class="btn-danger" onclick="deleteItem('${id}')">Excluir</button>
     </div>`);
 }
 
-async function deleteInsumo(id) {
+async function deleteItem(id) {
   try {
     await db.collection('items').doc(id).delete();
     closeModal();
-    showToast('Insumo excluído', 'success');
+    showToast('Item excluído', 'success');
   } catch (err) {
     console.error(err);
     showToast('Erro ao excluir', 'error');
@@ -794,7 +843,7 @@ async function deleteInsumo(id) {
 }
 
 /* =============================================
-   FORM: CATEGORIA (add/edit)
+   FORM: CATEGORIA
    ============================================= */
 function openCatForm(id) {
   const cat = id ? state.categories.find(c => c.id === id) : null;
@@ -802,8 +851,8 @@ function openCatForm(id) {
     <form id="form-cat" onsubmit="saveCat(event,'${id || ''}')">
       <div class="form-group">
         <label class="form-label">Nome da categoria *</label>
-        <input type="text" name="name" class="form-input" required
-          placeholder="Ex: Geladeira" value="${cat ? esc(cat.name) : ''}" autocomplete="off">
+        <input type="text" name="name" class="form-input" required autocomplete="off"
+          placeholder="Ex: Bebidas" value="${cat ? esc(cat.name) : ''}">
       </div>
       <div class="form-actions">
         ${id ? `<button type="button" class="btn-danger-ghost" onclick="confirmDelCat('${id}')">Excluir</button>` : ''}
@@ -818,11 +867,9 @@ function openCatForm(id) {
 async function saveCat(e, id) {
   e.preventDefault();
   const name = e.target.name.value.trim();
-  if (!name) { showToast('Informe o nome da categoria', 'error'); return; }
-
+  if (!name) { showToast('Informe o nome', 'error'); return; }
   const saveBtn = document.getElementById('btn-save-cat');
   if (saveBtn) { saveBtn.disabled = true; saveBtn.textContent = 'Salvando...'; }
-
   try {
     if (id) {
       await db.collection('categories').doc(id).update({ name });
@@ -833,7 +880,7 @@ async function saveCat(e, id) {
     showToast(id ? 'Categoria atualizada!' : 'Categoria criada!', 'success');
   } catch (err) {
     console.error(err);
-    showToast('Erro ao salvar. Tente novamente.', 'error');
+    showToast('Erro ao salvar', 'error');
     if (saveBtn) { saveBtn.disabled = false; saveBtn.textContent = 'Salvar'; }
   }
 }
@@ -844,7 +891,7 @@ function confirmDelCat(id) {
   const count = state.items.filter(i => i.categoryId === id).length;
   openModal('Excluir Categoria', `
     <p class="confirm-msg">Excluir <strong>${esc(cat.name)}</strong>?</p>
-    ${count > 0 ? `<p class="confirm-warn">⚠️ ${count} ${count === 1 ? 'insumo usa' : 'insumos usam'} esta categoria e ficarão sem categoria.</p>` : ''}
+    ${count > 0 ? `<p class="confirm-warn">⚠️ ${count} ${count === 1 ? 'item usa' : 'itens usam'} esta categoria.</p>` : ''}
     <div class="form-actions" style="margin-top:16px">
       <button class="btn-secondary" onclick="openCatForm('${id}')">Voltar</button>
       <div class="spacer"></div>
@@ -854,7 +901,6 @@ function confirmDelCat(id) {
 
 async function deleteCat(id) {
   try {
-    // Remove categoria dos itens que a usam
     const batch = db.batch();
     state.items
       .filter(i => i.categoryId === id)
@@ -892,25 +938,16 @@ function handleOverlayClick(e) {
    LOADER
    ============================================= */
 function showLoader(visible) {
-  const loader = document.getElementById('loader');
-  const app    = document.getElementById('app');
-  if (visible) {
-    loader.classList.remove('hidden');
-    app.classList.add('hidden');
-  } else {
-    loader.classList.add('hidden');
-    app.classList.remove('hidden');
-  }
+  document.getElementById('loader').classList.toggle('hidden', !visible);
+  document.getElementById('app').classList.toggle('hidden', visible);
 }
 
 function showLoaderError(title, msg) {
-  const loader = document.getElementById('loader');
-  loader.innerHTML = `
+  document.getElementById('loader').innerHTML = `
     <div class="loader-logo">⚠️</div>
     <p class="loader-error-title">${title}</p>
     <p class="loader-error-msg">${msg}</p>
-    <button class="loader-retry-btn" onclick="location.reload()">Tentar novamente</button>
-  `;
+    <button class="loader-retry-btn" onclick="location.reload()">Tentar novamente</button>`;
 }
 
 /* =============================================
@@ -931,14 +968,12 @@ function showToast(msg, type = 'success') {
    ============================================= */
 function esc(str) {
   return String(str ?? '')
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;');
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
 
 function refreshCurrentPage() {
-  const renders = { dashboard, insumos, estoque, listas, categorias };
+  const renders = { dashboard, produtos, insumos, listas, categorias };
   const fn = renders[state.page];
   if (fn) document.getElementById('page-content').innerHTML = fn();
 }
@@ -946,9 +981,7 @@ function refreshCurrentPage() {
 /* =============================================
    TECLADO
    ============================================= */
-document.addEventListener('keydown', e => {
-  if (e.key === 'Escape') closeModal();
-});
+document.addEventListener('keydown', e => { if (e.key === 'Escape') closeModal(); });
 
 /* =============================================
    START
