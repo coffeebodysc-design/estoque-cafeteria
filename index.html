@@ -4,11 +4,14 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
   <meta name="theme-color" content="#5C3D2E">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <title>Estoque Cafeteria</title>
-  <link rel="stylesheet" href="style.css">
+  <link rel="stylesheet" href="css/style.css">
 </head>
 <body>
 
+  <!-- LOADER (exibido enquanto conecta ao Firebase) -->
   <div id="loader">
     <div class="loader-logo">☕</div>
     <div class="loader-spinner"></div>
@@ -16,6 +19,8 @@
   </div>
 
   <div id="app" class="hidden">
+
+    <!-- HEADER -->
     <header id="app-header">
       <div class="header-side"></div>
       <h1 id="page-title">Estoque</h1>
@@ -23,19 +28,23 @@
         <span id="sync-dot" title="Conectado"></span>
       </div>
     </header>
+
+    <!-- MAIN CONTENT -->
     <main id="page-content"></main>
+
+    <!-- BOTTOM NAV -->
     <nav id="bottom-nav">
       <button class="nav-item" data-page="dashboard">
         <span class="nav-icon">&#9783;</span>
         <span class="nav-label">Início</span>
       </button>
-      <button class="nav-item" data-page="produtos">
-        <span class="nav-icon">&#9734;</span>
-        <span class="nav-label">Produtos</span>
+      <button class="nav-item" data-page="cafeteria">
+        <span class="nav-icon">☕</span>
+        <span class="nav-label">Cafeteria</span>
       </button>
-      <button class="nav-item" data-page="insumos">
-        <span class="nav-icon">&#9632;</span>
-        <span class="nav-label">Insumos</span>
+      <button class="nav-item" data-page="producao">
+        <span class="nav-icon">👩‍🍳</span>
+        <span class="nav-label">Produção</span>
       </button>
       <button class="nav-item" data-page="listas">
         <span class="nav-icon">&#9776;</span>
@@ -46,8 +55,10 @@
         <span class="nav-label">Categorias</span>
       </button>
     </nav>
-  </div>
 
+  </div><!-- /#app -->
+
+  <!-- MODAL OVERLAY -->
   <div id="modal-overlay" class="hidden" onclick="handleOverlayClick(event)">
     <div id="modal-sheet">
       <div class="modal-handle"></div>
@@ -59,11 +70,17 @@
     </div>
   </div>
 
+  <!-- TOAST -->
   <div id="toast" class="hidden" role="alert" aria-live="polite"></div>
 
+  <!-- FIREBASE SDKs -->
   <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
-  <script src="firebase-config.js"></script>
-  <script src="app.js"></script>
+
+  <!-- Configuração do Firebase (editar com seus dados) -->
+  <script src="js/firebase-config.js"></script>
+
+  <!-- App -->
+  <script src="js/app.js"></script>
 </body>
 </html>
