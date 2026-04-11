@@ -690,6 +690,17 @@ a { color: inherit; text-decoration: none; }
   background: var(--border);
   color: var(--text-muted);
 }
+.tab-badge-alert {
+  background: var(--danger) !important;
+  color: #fff !important;
+}
+
+/* 3 abas (Listas) — reduz fonte para caber bem no mobile */
+.tabs-3 .tab {
+  font-size: 12px;
+  padding: 10px 4px;
+  gap: 4px;
+}
 
 .lista-content {
   display: flex;
