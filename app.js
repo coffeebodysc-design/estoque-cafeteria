@@ -17,13 +17,14 @@ let state = {
   page:           'dashboard',
   categories:     [],
   items:          [],
-  insumosTab:     'cafeteria',
-  insumosSearch:  '',
-  produtosSearch: '',
+  cafeTab:        'produto',
+  producaoTab:    'estoque',
+  cafeSearch:     '',
+  producaoSearch: '',
   initialized:    false,
 };
 
-let listaTab = 'produzir';
+let listaTab = 'enviar';
 const qtyTimers = {};
 let _catsReady = false, _itemsReady = false;
 
@@ -75,8 +76,10 @@ function checkDataReady() {
   showLoader(false);
   setupNav();
 
-  // Detecta schema antigo (sem campo 'section') ou banco vazio → reseed
-  const hasOldSchema = state.items.length > 0 && !state.items.some(i => i.section);
+  // Detecta schema antigo (seções antigas) ou banco vazio → reseed
+  const OLD_SECTIONS = ['produto', 'insumo_cafeteria', 'insumo_producao'];
+  const hasOldSchema = state.items.length > 0 &&
+    state.items.some(i => OLD_SECTIONS.includes(i.section));
   const isEmpty = state.items.length === 0 && state.categories.length === 0;
 
   if (hasOldSchema || isEmpty) {
@@ -118,38 +121,53 @@ async function clearAndSeed() {
 async function seedData() {
   const now = new Date().toISOString();
 
-  // Categorias
-  const catVitRef  = db.collection('categories').doc();
-  const catCafeRef = db.collection('categories').doc();
-  const catProdRef = db.collection('categories').doc();
+  const catVitrineRef  = db.collection('categories').doc();
+  const catCafeRef     = db.collection('categories').doc();
+  const catEstoqueRef  = db.collection('categories').doc();
+  const catProdInsRef  = db.collection('categories').doc();
 
+  // ── BATCH 1: categorias + cafe_produto + patricia_estoque ──────────
   const batch1 = db.batch();
-  batch1.set(catVitRef,  { name: 'Vitrine',       createdAt: now });
-  batch1.set(catCafeRef, { name: 'Cafeteria',      createdAt: now });
-  batch1.set(catProdRef, { name: 'Produção Pati',  createdAt: now });
+  batch1.set(catVitrineRef, { name: 'Vitrine Café',     createdAt: now });
+  batch1.set(catCafeRef,    { name: 'Insumos Café',     createdAt: now });
+  batch1.set(catEstoqueRef, { name: 'Estoque Patricia', createdAt: now });
+  batch1.set(catProdInsRef, { name: 'Insumos Produção', createdAt: now });
 
-  // ── Produtos ──────────────────────────────
-  [
-    { name: 'Banana Bread',        unit: 'un', minQty: 8  },
-    { name: 'Bolo Cenoura',        unit: 'un', minQty: 10 },
-    { name: 'Bolo Milho',          unit: 'un', minQty: 10 },
-    { name: 'Brownie',             unit: 'un', minQty: 5  },
-    { name: 'Caramelo Salgado',    unit: 'g',  minQty: 0  },
-    { name: 'Calda de Goiabada',   unit: 'g',  minQty: 0  },
-    { name: 'Cookie Red Velvet',   unit: 'un', minQty: 5  },
-    { name: 'Cookie Tradicional',  unit: 'un', minQty: 10 },
-    { name: 'Focaccia',            unit: 'un', minQty: 3  },
-    { name: 'Fudge',               unit: 'un', minQty: 5  },
-    { name: 'Muffin de Mirtilo',   unit: 'un', minQty: 6  },
-    { name: 'Pão de Queijo',       unit: 'un', minQty: 15 },
-    { name: 'Torta Banoffee',      unit: 'un', minQty: 0  },
-    { name: 'Torta de Limão',      unit: 'un', minQty: 0  },
-  ].forEach(p => {
+  const produtosList = [
+    { name: 'Banana Bread',       unit: 'un', minQty: 8  },
+    { name: 'Bolo Cenoura',       unit: 'un', minQty: 10 },
+    { name: 'Bolo Milho',         unit: 'un', minQty: 10 },
+    { name: 'Brownie',            unit: 'un', minQty: 5  },
+    { name: 'Caramelo Salgado',   unit: 'g',  minQty: 0  },
+    { name: 'Calda de Goiabada',  unit: 'g',  minQty: 0  },
+    { name: 'Cookie Red Velvet',  unit: 'un', minQty: 5  },
+    { name: 'Cookie Tradicional', unit: 'un', minQty: 10 },
+    { name: 'Focaccia',           unit: 'un', minQty: 3  },
+    { name: 'Fudge',              unit: 'un', minQty: 5  },
+    { name: 'Muffin de Mirtilo',  unit: 'un', minQty: 6  },
+    { name: 'Pão de Queijo',      unit: 'un', minQty: 15 },
+    { name: 'Torta Banoffee',     unit: 'un', minQty: 0  },
+    { name: 'Torta de Limão',     unit: 'un', minQty: 0  },
+  ];
+
+  // Estoque na cafeteria (barista conta)
+  produtosList.forEach(p => {
     const ref = db.collection('items').doc();
-    batch1.set(ref, { ...p, section: 'produto', categoryId: catVitRef.id, currentQty: 0, observation: '', createdAt: now });
+    batch1.set(ref, { ...p, section: 'cafe_produto', categoryId: catVitrineRef.id,
+      currentQty: 0, observation: '', createdAt: now });
   });
 
-  // ── Insumos Cafeteria ─────────────────────
+  // Estoque na produção da Patricia (o que ela tem pronto)
+  produtosList.forEach(p => {
+    const ref = db.collection('items').doc();
+    batch1.set(ref, { ...p, section: 'patricia_estoque', categoryId: catEstoqueRef.id,
+      currentQty: 0, observation: '', createdAt: now });
+  });
+
+  await batch1.commit();
+
+  // ── BATCH 2: cafe_insumo ──────────────────────────────────────────
+  const batch2 = db.batch();
   [
     { name: 'Abacate',           unit: 'un', minQty: 5   },
     { name: 'Água com Gás',      unit: 'un', minQty: 10  },
@@ -180,13 +198,14 @@ async function seedData() {
     { name: 'Xarope Baunilha',   unit: 'un', minQty: 1   },
   ].forEach(i => {
     const ref = db.collection('items').doc();
-    batch1.set(ref, { ...i, section: 'insumo_cafeteria', categoryId: catCafeRef.id, currentQty: 0, observation: '', createdAt: now });
+    batch2.set(ref, { ...i, section: 'cafe_insumo', categoryId: catCafeRef.id,
+      currentQty: 0, observation: '', createdAt: now });
   });
 
-  await batch1.commit();
+  await batch2.commit();
 
-  // ── Insumos Produção Pati (batch separado) ─
-  const batch2 = db.batch();
+  // ── BATCH 3: patricia_insumo ──────────────────────────────────────
+  const batch3 = db.batch();
   [
     { name: 'Açúcar',                    unit: 'kg', minQty: 0 },
     { name: 'Açúcar Demerara',           unit: 'kg', minQty: 0 },
@@ -223,10 +242,11 @@ async function seedData() {
     { name: 'Tomate Cereja',             unit: 'g',  minQty: 0 },
   ].forEach(i => {
     const ref = db.collection('items').doc();
-    batch2.set(ref, { ...i, section: 'insumo_producao', categoryId: catProdRef.id, currentQty: 0, observation: '', createdAt: now });
+    batch3.set(ref, { ...i, section: 'patricia_insumo', categoryId: catProdInsRef.id,
+      currentQty: 0, observation: '', createdAt: now });
   });
 
-  await batch2.commit();
+  await batch3.commit();
   showLoader(false);
   navigateTo('dashboard');
 }
@@ -244,8 +264,8 @@ function navigateTo(page) {
   state.page = page;
   const titles = {
     dashboard:  'Estoque Cafeteria',
-    produtos:   'Produtos',
-    insumos:    'Insumos',
+    cafeteria:  'Cafeteria',
+    producao:   'Produção',
     listas:     'Listas',
     categorias: 'Categorias',
   };
@@ -253,7 +273,7 @@ function navigateTo(page) {
   document.querySelectorAll('.nav-item').forEach(b =>
     b.classList.toggle('active', b.dataset.page === page)
   );
-  const renders = { dashboard, produtos, insumos, listas, categorias };
+  const renders = { dashboard, cafeteria, producao, listas, categorias };
   const el = document.getElementById('page-content');
   el.innerHTML = (renders[page] || (() => ''))();
   el.scrollTop = 0;
@@ -298,29 +318,37 @@ function sortWithBelowFirst(arr) {
    PÁGINA: DASHBOARD
    ============================================= */
 function dashboard() {
-  const prodAbaixo    = belowBySection('produto');
-  const comprarAbaixo = belowBySection('insumo_cafeteria', 'insumo_producao');
-  const totalProd     = itemsBySection('produto').length;
-  const totalInsumos  = itemsBySection('insumo_cafeteria').length + itemsBySection('insumo_producao').length;
+  const cafeAbaixo    = belowBySection('cafe_produto');
+  const produzirAbaixo = belowBySection('patricia_estoque');
+  const comprarAbaixo = belowBySection('cafe_insumo', 'patricia_insumo');
+
+  const totalCafeProd  = itemsBySection('cafe_produto').length;
+  const totalPatEstoque = itemsBySection('patricia_estoque').length;
 
   const hoje = new Date().toLocaleDateString('pt-BR', {
     weekday: 'long', day: 'numeric', month: 'long'
   });
 
-  // Alertas combinados
-  const alertas = [...prodAbaixo, ...comprarAbaixo];
+  const alertas = [...cafeAbaixo, ...produzirAbaixo, ...comprarAbaixo];
   const alertasHtml = alertas.length
     ? `<div class="section">
         <p class="section-title">⚠️ Atenção necessária</p>
         <div class="alert-list">
           ${alertas.map(item => {
-            const page = item.section === 'produto' ? 'produtos' : 'insumos';
-            const icon = item.section === 'produto' ? '🛍️' : item.section === 'insumo_cafeteria' ? '☕' : '👩‍🍳';
+            const pageTarget = item.section === 'cafe_produto' || item.section === 'cafe_insumo'
+              ? 'cafeteria' : 'producao';
+            const icon = item.section === 'cafe_produto'     ? '☕' :
+                         item.section === 'cafe_insumo'      ? '📦' :
+                         item.section === 'patricia_estoque' ? '👩‍🍳' : '🛒';
+            const label = item.section === 'cafe_produto'     ? 'Cafeteria · Vitrine' :
+                          item.section === 'cafe_insumo'      ? 'Cafeteria · Insumo' :
+                          item.section === 'patricia_estoque' ? 'Patricia · Estoque' :
+                                                                'Patricia · Insumo';
             return `
-              <div class="alert-item" onclick="navigateTo('${page}')">
+              <div class="alert-item" onclick="navigateTo('${pageTarget}')">
                 <div class="alert-item-info">
                   <span class="alert-item-name">${esc(item.name)}</span>
-                  <span class="alert-item-cat">${icon} ${item.section === 'produto' ? 'Produto' : item.section === 'insumo_cafeteria' ? 'Cafeteria' : 'Produção Pati'}</span>
+                  <span class="alert-item-cat">${icon} ${label}</span>
                 </div>
                 <div class="alert-item-qty">
                   <span class="qty-badge-danger">${fmtQty(item.currentQty)} ${item.unit}</span>
@@ -339,20 +367,20 @@ function dashboard() {
     <div class="date-header">${hoje}</div>
 
     <div class="stats-grid">
-      <div class="stat-card" onclick="navigateTo('produtos')">
-        <div class="stat-icon">🛍️</div>
-        <div class="stat-value">${totalProd}</div>
-        <div class="stat-label">Produtos</div>
+      <div class="stat-card" onclick="navigateTo('cafeteria')">
+        <div class="stat-icon">☕</div>
+        <div class="stat-value">${totalCafeProd}</div>
+        <div class="stat-label">Vitrine Café</div>
       </div>
-      <div class="stat-card ${prodAbaixo.length > 0 ? 'stat-danger' : ''}" onclick="navigateTo('listas')">
-        <div class="stat-icon">${prodAbaixo.length > 0 ? '⚠️' : '✅'}</div>
-        <div class="stat-value">${prodAbaixo.length}</div>
-        <div class="stat-label">Produzir</div>
+      <div class="stat-card ${cafeAbaixo.length > 0 ? 'stat-danger' : ''}" onclick="navigateTo('listas')">
+        <div class="stat-icon">${cafeAbaixo.length > 0 ? '⚠️' : '✅'}</div>
+        <div class="stat-value">${cafeAbaixo.length}</div>
+        <div class="stat-label">Enviar</div>
       </div>
-      <div class="stat-card" onclick="navigateTo('insumos')">
-        <div class="stat-icon">📦</div>
-        <div class="stat-value">${totalInsumos}</div>
-        <div class="stat-label">Insumos</div>
+      <div class="stat-card" onclick="navigateTo('producao')">
+        <div class="stat-icon">👩‍🍳</div>
+        <div class="stat-value">${totalPatEstoque}</div>
+        <div class="stat-label">Est. Patricia</div>
       </div>
       <div class="stat-card ${comprarAbaixo.length > 0 ? 'stat-danger' : ''}" onclick="navigateTo('listas')">
         <div class="stat-icon">${comprarAbaixo.length > 0 ? '🛒' : '✅'}</div>
@@ -362,11 +390,11 @@ function dashboard() {
     </div>
 
     <div class="quick-actions">
-      <button class="btn-action-primary" onclick="navigateTo('produtos')">
-        <span>🛍️</span> Atualizar produtos
+      <button class="btn-action-primary" onclick="navigateTo('cafeteria')">
+        <span>☕</span> Atualizar Cafeteria
       </button>
-      <button class="btn-action-secondary" onclick="navigateTo('insumos')">
-        <span>📦</span> Atualizar insumos
+      <button class="btn-action-secondary" onclick="navigateTo('producao')">
+        <span>👩‍🍳</span> Atualizar Produção
       </button>
       <button class="btn-action-secondary" onclick="navigateTo('listas')">
         <span>📋</span> Ver listas de compra / produção
@@ -378,153 +406,171 @@ function dashboard() {
 }
 
 /* =============================================
-   PÁGINA: PRODUTOS
+   PÁGINA: CAFETERIA
    ============================================= */
-function produtos() {
-  const search = state.produtosSearch || '';
-  let list = sortWithBelowFirst(itemsBySection('produto'));
-  if (search) list = list.filter(i => i.name.toLowerCase().includes(search.toLowerCase()));
-
-  const listHtml = list.length
-    ? list.map(item => {
-        const below = isBelow(item);
-        return `
-          <div class="estoque-item ${below ? 'estoque-below' : ''}" id="ei-${item.id}">
-            <div class="estoque-item-header">
-              <div>
-                <div class="estoque-item-name">${esc(item.name)}</div>
-                <div class="estoque-item-meta">
-                  ${below ? '<span class="text-danger" style="font-weight:700">⚠️ Produzir · </span>' : ''}
-                  mín: ${fmtQty(item.minQty)} ${item.unit}
-                </div>
-              </div>
-              <button class="btn-edit-item" onclick="openItemForm('${item.id}')" title="Editar">✏️</button>
-            </div>
-            <div class="estoque-controls">
-              <button class="btn-qty" onclick="changeQty('${item.id}', -1)" title="Vendeu 1">−</button>
-              <div class="qty-field-wrap">
-                <input type="number" class="qty-field" id="qf-${item.id}"
-                  value="${fmtQty(item.currentQty)}" min="0" step="1"
-                  onchange="setQty('${item.id}', this.value)"
-                  onblur="setQty('${item.id}', this.value)">
-                <span class="qty-unit-lbl">${item.unit}</span>
-              </div>
-              <button class="btn-qty" onclick="changeQty('${item.id}', 1)" title="Produziu 1">＋</button>
-              <span class="save-check" id="sc-${item.id}">✓</span>
-            </div>
-          </div>`;
-      }).join('')
-    : `<div class="empty-state">
-        <span class="empty-icon">🛍️</span>
-        <p>Nenhum produto encontrado.</p>
-       </div>`;
-
-  return `
-    <div class="search-bar">
-      <input type="search" class="search-input" placeholder="Buscar produto..."
-        value="${esc(search)}" oninput="filterProdutos(this.value)">
-    </div>
-    <div class="estoque-tip">− Vendeu · ＋ Produziu · Toque no número para editar</div>
-    <div class="estoque-list">${listHtml}</div>
-    <button class="fab" onclick="openItemForm(null,'produto')" title="Novo produto">＋</button>
-  `;
-}
-
-function filterProdutos(val) {
-  state.produtosSearch = val;
-  document.getElementById('page-content').innerHTML = produtos();
-}
-
-/* =============================================
-   PÁGINA: INSUMOS
-   ============================================= */
-function insumos() {
-  const search  = state.insumosSearch || '';
-  const section = state.insumosTab === 'cafeteria' ? 'insumo_cafeteria' : 'insumo_producao';
+function cafeteria() {
+  const tab     = state.cafeTab;
+  const section = tab === 'produto' ? 'cafe_produto' : 'cafe_insumo';
+  const search  = state.cafeSearch || '';
 
   let list = sortWithBelowFirst(itemsBySection(section));
   if (search) list = list.filter(i => i.name.toLowerCase().includes(search.toLowerCase()));
 
-  const belowCafe  = belowBySection('insumo_cafeteria').length;
-  const belowProd  = belowBySection('insumo_producao').length;
-  const totalCafe  = itemsBySection('insumo_cafeteria').length;
-  const totalProdS = itemsBySection('insumo_producao').length;
+  const belowProd  = belowBySection('cafe_produto').length;
+  const belowIns   = belowBySection('cafe_insumo').length;
+  const totalProd  = itemsBySection('cafe_produto').length;
+  const totalIns   = itemsBySection('cafe_insumo').length;
+
+  const tip = tab === 'produto'
+    ? '− Vendeu · ＋ Recebeu · Toque no número para editar'
+    : 'Toque no número para editar · Use − e ＋ para ajustes rápidos';
 
   const listHtml = list.length
-    ? list.map(item => {
-        const below = isBelow(item);
-        return `
-          <div class="estoque-item ${below ? 'estoque-below' : ''}" id="ei-${item.id}">
-            <div class="estoque-item-header">
-              <div>
-                <div class="estoque-item-name">${esc(item.name)}</div>
-                <div class="estoque-item-meta">
-                  mín: ${fmtQty(item.minQty)} ${item.unit}
-                  ${below ? ' · <span class="text-danger" style="font-weight:700">comprar</span>' : ''}
-                </div>
-              </div>
-              <button class="btn-edit-item" onclick="openItemForm('${item.id}')" title="Editar">✏️</button>
-            </div>
-            <div class="estoque-controls">
-              <button class="btn-qty" onclick="changeQty('${item.id}', -1)" aria-label="Diminuir">−</button>
-              <div class="qty-field-wrap">
-                <input type="number" class="qty-field" id="qf-${item.id}"
-                  value="${fmtQty(item.currentQty)}" min="0" step="1"
-                  onchange="setQty('${item.id}', this.value)"
-                  onblur="setQty('${item.id}', this.value)">
-                <span class="qty-unit-lbl">${item.unit}</span>
-              </div>
-              <button class="btn-qty" onclick="changeQty('${item.id}', 1)" aria-label="Aumentar">＋</button>
-              <span class="save-check" id="sc-${item.id}">✓</span>
-            </div>
-          </div>`;
-      }).join('')
+    ? list.map(item => renderItemCard(item)).join('')
     : `<div class="empty-state">
-        <span class="empty-icon">📦</span>
-        <p>Nenhum insumo encontrado.</p>
+        <span class="empty-icon">${tab === 'produto' ? '🛍️' : '📦'}</span>
+        <p>Nenhum item encontrado.</p>
        </div>`;
 
-  const badgeCafe = belowCafe > 0
-    ? `<span class="tab-badge">${belowCafe}</span>`
-    : `<span class="tab-badge">${totalCafe}</span>`;
   const badgeProd = belowProd > 0
-    ? `<span class="tab-badge">${belowProd}</span>`
-    : `<span class="tab-badge">${totalProdS}</span>`;
+    ? `<span class="tab-badge tab-badge-alert">${belowProd}</span>`
+    : `<span class="tab-badge">${totalProd}</span>`;
+  const badgeIns = belowIns > 0
+    ? `<span class="tab-badge tab-badge-alert">${belowIns}</span>`
+    : `<span class="tab-badge">${totalIns}</span>`;
 
   return `
     <div class="tabs">
-      <button class="tab ${state.insumosTab === 'cafeteria' ? 'tab-active' : ''}"
-        onclick="setInsumosTab('cafeteria')">
-        ☕ Cafeteria ${badgeCafe}
+      <button class="tab ${tab === 'produto' ? 'tab-active' : ''}" onclick="setCafeTab('produto')">
+        🛍️ Produtos ${badgeProd}
       </button>
-      <button class="tab ${state.insumosTab === 'producao' ? 'tab-active' : ''}"
-        onclick="setInsumosTab('producao')">
-        👩‍🍳 Produção ${badgeProd}
+      <button class="tab ${tab === 'insumo' ? 'tab-active' : ''}" onclick="setCafeTab('insumo')">
+        📦 Insumos ${badgeIns}
       </button>
     </div>
     <div class="search-bar">
-      <input type="search" class="search-input" placeholder="Buscar insumo..."
-        value="${esc(search)}" oninput="filterInsumos(this.value)">
+      <input type="search" class="search-input" placeholder="Buscar..."
+        value="${esc(search)}" oninput="filterCafe(this.value)">
     </div>
-    <div class="estoque-tip">Toque no número para editar · Use − e ＋ para ajustes rápidos</div>
+    <div class="estoque-tip">${tip}</div>
     <div class="estoque-list">${listHtml}</div>
-    <button class="fab" onclick="openItemForm(null,'${section}')" title="Novo insumo">＋</button>
+    <button class="fab" onclick="openItemForm(null,'${section}')" title="Novo item">＋</button>
   `;
 }
 
-function setInsumosTab(tab) {
-  state.insumosTab    = tab;
-  state.insumosSearch = '';
-  document.getElementById('page-content').innerHTML = insumos();
+function setCafeTab(tab) {
+  state.cafeTab   = tab;
+  state.cafeSearch = '';
+  document.getElementById('page-content').innerHTML = cafeteria();
 }
 
-function filterInsumos(val) {
-  state.insumosSearch = val;
-  document.getElementById('page-content').innerHTML = insumos();
+function filterCafe(val) {
+  state.cafeSearch = val;
+  document.getElementById('page-content').innerHTML = cafeteria();
 }
 
 /* =============================================
-   ESTOQUE: CONTROLES COMUNS (Produtos + Insumos)
+   PÁGINA: PRODUÇÃO
+   ============================================= */
+function producao() {
+  const tab     = state.producaoTab;
+  const section = tab === 'estoque' ? 'patricia_estoque' : 'patricia_insumo';
+  const search  = state.producaoSearch || '';
+
+  let list = sortWithBelowFirst(itemsBySection(section));
+  if (search) list = list.filter(i => i.name.toLowerCase().includes(search.toLowerCase()));
+
+  const belowEst = belowBySection('patricia_estoque').length;
+  const belowIns = belowBySection('patricia_insumo').length;
+  const totalEst = itemsBySection('patricia_estoque').length;
+  const totalIns = itemsBySection('patricia_insumo').length;
+
+  const tip = tab === 'estoque'
+    ? '− Enviou para café · ＋ Produziu · Toque no número para editar'
+    : 'Toque no número para editar · Use − e ＋ para ajustes rápidos';
+
+  const listHtml = list.length
+    ? list.map(item => renderItemCard(item)).join('')
+    : `<div class="empty-state">
+        <span class="empty-icon">${tab === 'estoque' ? '📦' : '🛒'}</span>
+        <p>Nenhum item encontrado.</p>
+       </div>`;
+
+  const badgeEst = belowEst > 0
+    ? `<span class="tab-badge tab-badge-alert">${belowEst}</span>`
+    : `<span class="tab-badge">${totalEst}</span>`;
+  const badgeIns = belowIns > 0
+    ? `<span class="tab-badge tab-badge-alert">${belowIns}</span>`
+    : `<span class="tab-badge">${totalIns}</span>`;
+
+  return `
+    <div class="tabs">
+      <button class="tab ${tab === 'estoque' ? 'tab-active' : ''}" onclick="setProducaoTab('estoque')">
+        📦 Estoque ${badgeEst}
+      </button>
+      <button class="tab ${tab === 'insumo' ? 'tab-active' : ''}" onclick="setProducaoTab('insumo')">
+        🛒 Insumos ${badgeIns}
+      </button>
+    </div>
+    <div class="search-bar">
+      <input type="search" class="search-input" placeholder="Buscar..."
+        value="${esc(search)}" oninput="filterProducao(this.value)">
+    </div>
+    <div class="estoque-tip">${tip}</div>
+    <div class="estoque-list">${listHtml}</div>
+    <button class="fab" onclick="openItemForm(null,'${section}')" title="Novo item">＋</button>
+  `;
+}
+
+function setProducaoTab(tab) {
+  state.producaoTab   = tab;
+  state.producaoSearch = '';
+  document.getElementById('page-content').innerHTML = producao();
+}
+
+function filterProducao(val) {
+  state.producaoSearch = val;
+  document.getElementById('page-content').innerHTML = producao();
+}
+
+/* =============================================
+   CARD DE ITEM (compartilhado)
+   ============================================= */
+function renderItemCard(item) {
+  const below = isBelow(item);
+  const sectionLabel =
+    item.section === 'cafe_produto'     ? '⚠️ Enviar para café · ' :
+    item.section === 'patricia_estoque' ? '⚠️ Produzir · ' :
+    '⚠️ Comprar · ';
+  return `
+    <div class="estoque-item ${below ? 'estoque-below' : ''}" id="ei-${item.id}">
+      <div class="estoque-item-header">
+        <div>
+          <div class="estoque-item-name">${esc(item.name)}</div>
+          <div class="estoque-item-meta">
+            ${below ? `<span class="text-danger" style="font-weight:700">${sectionLabel}</span>` : ''}
+            mín: ${fmtQty(item.minQty)} ${item.unit}
+          </div>
+        </div>
+        <button class="btn-edit-item" onclick="openItemForm('${item.id}')" title="Editar">✏️</button>
+      </div>
+      <div class="estoque-controls">
+        <button class="btn-qty" onclick="changeQty('${item.id}', -1)">−</button>
+        <div class="qty-field-wrap">
+          <input type="number" class="qty-field" id="qf-${item.id}"
+            value="${fmtQty(item.currentQty)}" min="0" step="1"
+            onchange="setQty('${item.id}', this.value)"
+            onblur="setQty('${item.id}', this.value)">
+          <span class="qty-unit-lbl">${item.unit}</span>
+        </div>
+        <button class="btn-qty" onclick="changeQty('${item.id}', 1)">＋</button>
+        <span class="save-check" id="sc-${item.id}">✓</span>
+      </div>
+    </div>`;
+}
+
+/* =============================================
+   ESTOQUE: CONTROLES COMUNS
    ============================================= */
 function changeQty(id, delta) {
   const item = state.items.find(i => i.id === id);
@@ -574,18 +620,21 @@ function scheduleQtySave(id, qty) {
    PÁGINA: LISTAS
    ============================================= */
 function listas() {
-  const produzir     = belowBySection('produto');
-  const comprarCafe  = belowBySection('insumo_cafeteria');
-  const comprarProd  = belowBySection('insumo_producao');
-  const comprar      = [...comprarCafe, ...comprarProd];
-  const current      = listaTab === 'produzir' ? produzir : comprar;
+  const enviar   = belowBySection('cafe_produto');       // barista precisa que Patricia envie
+  const produzir = belowBySection('patricia_estoque');   // Patricia precisa produzir
+  const comprar  = belowBySection('cafe_insumo', 'patricia_insumo'); // precisa comprar
+
+  const current = listaTab === 'enviar'   ? enviar :
+                  listaTab === 'produzir' ? produzir : comprar;
 
   const renderLista = items => items.length
     ? items.map(item => {
-        const icon = item.section === 'produto' ? '🛍️' :
-                     item.section === 'insumo_cafeteria' ? '☕' : '👩‍🍳';
-        const label = item.section === 'insumo_cafeteria' ? 'Cafeteria' :
-                      item.section === 'insumo_producao'  ? 'Produção'  : 'Produto';
+        const icon = item.section === 'cafe_produto'     ? '☕' :
+                     item.section === 'patricia_estoque' ? '👩‍🍳' :
+                     item.section === 'cafe_insumo'      ? '📦' : '🛒';
+        const label = item.section === 'cafe_produto'     ? 'Cafeteria' :
+                      item.section === 'patricia_estoque' ? 'Produção' :
+                      item.section === 'cafe_insumo'      ? 'Insumo Café' : 'Insumo Produção';
         return `
           <div class="lista-item">
             <div class="lista-item-info">
@@ -600,13 +649,18 @@ function listas() {
       }).join('')
     : `<div class="empty-state success">
         <span class="empty-icon">✅</span>
-        <p>${listaTab === 'produzir' ? 'Nenhum produto abaixo do mínimo!' : 'Nada para comprar!'}</p>
+        <p>${listaTab === 'enviar' ? 'Café com estoque OK!' :
+            listaTab === 'produzir' ? 'Nada para produzir!' : 'Nada para comprar!'}</p>
        </div>`;
 
-  const hasAny = produzir.length > 0 || comprar.length > 0;
+  const hasAny = enviar.length > 0 || produzir.length > 0 || comprar.length > 0;
 
   return `
-    <div class="tabs">
+    <div class="tabs tabs-3">
+      <button class="tab ${listaTab === 'enviar' ? 'tab-active' : ''}"
+        onclick="setListaTab('enviar')">
+        ☕ Enviar <span class="tab-badge">${enviar.length}</span>
+      </button>
       <button class="tab ${listaTab === 'produzir' ? 'tab-active' : ''}"
         onclick="setListaTab('produzir')">
         👩‍🍳 Produzir <span class="tab-badge">${produzir.length}</span>
@@ -637,15 +691,20 @@ function setListaTab(tab) {
 }
 
 function gerarTexto() {
-  const produzir    = belowBySection('produto');
-  const comprarCafe = belowBySection('insumo_cafeteria');
-  const comprarProd = belowBySection('insumo_producao');
+  const enviar      = belowBySection('cafe_produto');
+  const produzir    = belowBySection('patricia_estoque');
+  const comprarCafe = belowBySection('cafe_insumo');
+  const comprarProd = belowBySection('patricia_insumo');
   const data        = new Date().toLocaleDateString('pt-BR');
 
   let msg = `*Estoque Cafeteria*\n_${data}_\n`;
 
+  if (enviar.length) {
+    msg += `\n*Enviar para Café (Patricia → Café):*\n`;
+    enviar.forEach(i => msg += `- ${i.name}: atual ${fmtQty(i.currentQty)} ${i.unit} | mín ${fmtQty(i.minQty)} ${i.unit}\n`);
+  }
   if (produzir.length) {
-    msg += `\n*Produzir:*\n`;
+    msg += `\n*Produzir (Patricia):*\n`;
     produzir.forEach(i => msg += `- ${i.name}: atual ${fmtQty(i.currentQty)} ${i.unit} | mín ${fmtQty(i.minQty)} ${i.unit}\n`);
   }
   if (comprarCafe.length) {
@@ -656,7 +715,7 @@ function gerarTexto() {
     msg += `\n*Comprar (Produção Pati):*\n`;
     comprarProd.forEach(i => msg += `- ${i.name}: atual ${fmtQty(i.currentQty)} ${i.unit} | mín ${fmtQty(i.minQty)} ${i.unit}\n`);
   }
-  if (!produzir.length && !comprarCafe.length && !comprarProd.length) {
+  if (!enviar.length && !produzir.length && !comprarCafe.length && !comprarProd.length) {
     msg += `\n_Tudo OK! Estoque dentro do mínimo. ✅_`;
   }
   return msg;
@@ -711,11 +770,11 @@ function categorias() {
 }
 
 /* =============================================
-   FORM: ITEM (add/edit) — Produto ou Insumo
+   FORM: ITEM (add/edit)
    ============================================= */
 function openItemForm(id, defaultSection) {
   const item    = id ? state.items.find(i => i.id === id) : null;
-  const section = item ? item.section : (defaultSection || 'insumo_cafeteria');
+  const section = item ? item.section : (defaultSection || 'cafe_produto');
   const title   = item ? 'Editar Item' : 'Novo Item';
 
   const catOpts = state.categories
@@ -723,13 +782,14 @@ function openItemForm(id, defaultSection) {
     .join('');
 
   const unitOpts = UNITS
-    .map(u => `<option value="${u}" ${(item ? item.unit : (section === 'produto' ? 'un' : 'kg')) === u ? 'selected' : ''}>${u}</option>`)
+    .map(u => `<option value="${u}" ${(item ? item.unit : 'un') === u ? 'selected' : ''}>${u}</option>`)
     .join('');
 
   const sectionOpts = [
-    { v: 'produto',           l: '🛍️ Produto (vitrine)' },
-    { v: 'insumo_cafeteria',  l: '☕ Insumo Cafeteria'  },
-    { v: 'insumo_producao',   l: '👩‍🍳 Insumo Produção Pati' },
+    { v: 'cafe_produto',     l: '🛍️ Produto Cafeteria'    },
+    { v: 'cafe_insumo',      l: '📦 Insumo Cafeteria'      },
+    { v: 'patricia_estoque', l: '👩‍🍳 Estoque Patricia'      },
+    { v: 'patricia_insumo',  l: '🛒 Insumo Produção Pati'  },
   ].map(o => `<option value="${o.v}" ${section === o.v ? 'selected' : ''}>${o.l}</option>`).join('');
 
   const html = `
@@ -983,7 +1043,7 @@ function esc(str) {
 }
 
 function refreshCurrentPage() {
-  const renders = { dashboard, produtos, insumos, listas, categorias };
+  const renders = { dashboard, cafeteria, producao, listas, categorias };
   const fn = renders[state.page];
   if (fn) document.getElementById('page-content').innerHTML = fn();
 }
